@@ -1,6 +1,6 @@
 <?php
 session_start();
-require 'config.php';
+require 'db/config.php';
 
 header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:");
 
@@ -21,15 +21,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         $_SESSION['register_attempts']++;
 
-        $first_name = trim(filter_input(INPUT_POST, 'first_name', FILTER_SANITIZE_STRING));
-        $last_name = trim(filter_input(INPUT_POST, 'last_name', FILTER_SANITIZE_STRING));
         $email = trim(filter_input(INPUT_POST, 'email', FILTER_VALIDATE_EMAIL));
-        $phone_number = trim(preg_replace("/[^0-9+]/", "", $_POST['phone_number']));
         $user_type = $_POST['user_type'] ?? '';
         $password = $_POST['password'] ?? '';
         $confirm_password = $_POST['confirm_password'] ?? '';
 
-        if (!$first_name || !$last_name || !$email || !$phone_number || !$user_type || !$password || !$confirm_password) {
+        if (!$email || !$user_type || !$password || !$confirm_password) {
             $errors[] = "All fields are required.";
         }
 
@@ -62,13 +59,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $password_hash = password_hash($password, PASSWORD_BCRYPT);
 
             try {
-                $stmt = $conn->prepare("INSERT INTO users (first_name, last_name, email, phone_number, user_type, password_hash)
-                                        VALUES (:first_name, :last_name, :email, :phone_number, :user_type, :password_hash)");
+                $stmt = $conn->prepare("INSERT INTO users (email, user_type, password_hash)
+                                        VALUES (:email, :user_type, :password_hash)");
                 $stmt->execute([
-                    'first_name' => $first_name,
-                    'last_name' => $last_name,
                     'email' => $email,
-                    'phone_number' => $phone_number,
                     'user_type' => $user_type,
                     'password_hash' => $password_hash
                 ]);
@@ -88,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MF Clinic Register</title>
+  <title>Secuno Register</title>
   <style>
     body {
       box-sizing: border-box;
@@ -145,13 +139,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       border-radius: 6px;
       cursor: pointer;
     }
-    .register-form .row {
-      display: flex;
-      justify-content: space-between;
-    }
-    .register-form .row input {
-      width: 48%;
-    }
     .register-form .message {
       margin-bottom: 10px;
       font-size: 14px;
@@ -189,7 +176,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <div class="container">
   <div class="register-section">
     <div class="logo">
-      <span>MF</span> CLINIC
+      <span>Secuno</span>
     </div>
     <div class="register-form">
       <h2>Sign Up</h2>
@@ -209,12 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       <form action="register.php" method="POST" autocomplete="off">
         <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
 
-        <div class="row">
-          <input type="text" name="first_name" placeholder="First Name" required>
-          <input type="text" name="last_name" placeholder="Last Name" required>
-        </div>
         <input type="email" name="email" placeholder="Enter Email" required>
-        <input type="tel" name="phone_number" placeholder="Enter Phone Number" required>
 
         <select name="user_type" required>
           <option value="">Select User Type</option>
