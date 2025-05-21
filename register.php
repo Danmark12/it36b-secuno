@@ -1,225 +1,171 @@
 <?php
-session_start();
-require 'db/config.php';
+require 'db.php'; // Your PDO connection
+require 'vendor/autoload.php'; // PHPMailer
 
-header("Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:");
+use PHPMailer\PHPMailer\PHPMailer;
+use PHPMailer\PHPMailer\Exception;
 
-$errors = [];
-$success = '';
+// Handle POST request
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $email = trim($_POST['email']);
+    $password = $_POST['password'];
+    $user_type = 'student';
 
-if (empty($_SESSION['csrf_token'])) {
-    $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    // ✅ Validate Gmail email
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !preg_match('/^[a-zA-Z0-9._%+-]+@gmail\.com$/', $email)) {
+        showMessage("❌ Only valid @gmail.com email addresses are allowed.");
+        exit;
+    }
+
+    // ✅ Check if already registered
+    $stmt = $conn->prepare("SELECT COUNT(*) FROM users WHERE email = :email");
+    $stmt->execute(['email' => $email]);
+    if ($stmt->fetchColumn() > 0) {
+        showMessage("❌ Email is already registered.");
+        exit;
+    }
+
+    // ✅ Hash password
+    $password_hash = password_hash($password, PASSWORD_BCRYPT);
+
+    // ✅ Generate token
+    $token = bin2hex(random_bytes(32));
+    $token_expiry = date("Y-m-d H:i:s", strtotime("+1 hour"));
+
+    // ✅ Insert into pending_users
+    $stmt = $conn->prepare("INSERT INTO pending_users (email, user_type, password_hash, token, token_expires_at) VALUES (:email, :user_type, :password_hash, :token, :token_expires_at)");
+    $stmt->execute([
+        'email' => $email,
+        'user_type' => $user_type,
+        'password_hash' => $password_hash,
+        'token' => $token,
+        'token_expires_at' => $token_expiry
+    ]);
+
+    // ✅ Send verification email
+    $verify_link = "http://yourdomain.com/verify.php?token=$token"; // Replace with your domain
+    $subject = "Verify Your Email";
+    $body = "Click this link to verify your account: <a href='$verify_link'>$verify_link</a>";
+
+    $mail = new PHPMailer(true);
+    try {
+        $mail->isSMTP();
+        $mail->Host = 'smtp.gmail.com';
+        $mail->SMTPAuth = true;
+        $mail->Username = 'your-email@gmail.com'; // Your Gmail
+        $mail->Password = 'your-app-password'; // Use App Password
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port = 587;
+
+        $mail->setFrom('your-email@gmail.com', 'Your App');
+        $mail->addAddress($email);
+        $mail->isHTML(true);
+        $mail->Subject = $subject;
+        $mail->Body    = $body;
+
+        $mail->send();
+        showMessage("✅ Registration successful! Please check your Gmail to verify your account.");
+    } catch (Exception $e) {
+        showMessage("❌ Email could not be sent. Error: {$mail->ErrorInfo}");
+    }
 }
 
-$_SESSION['register_attempts'] = $_SESSION['register_attempts'] ?? 0;
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if ($_SESSION['register_attempts'] > 5) {
-        $errors[] = "Too many registration attempts. Please try again later.";
-    } elseif (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-        $errors[] = "Invalid CSRF token.";
-    } else {
-        $_SESSION['register_attempts']++;
-
-        $email = trim(filter_input(INPUT_POST, 'email', FILTER_VALIDATE_EMAIL));
-        $user_type = $_POST['user_type'] ?? '';
-        $password = $_POST['password'] ?? '';
-        $confirm_password = $_POST['confirm_password'] ?? '';
-
-        if (!$email || !$user_type || !$password || !$confirm_password) {
-            $errors[] = "All fields are required.";
-        }
-
-        if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $errors[] = "Invalid email address.";
-        }
-
-        if ($password !== $confirm_password) {
-            $errors[] = "Passwords do not match.";
-        }
-
-        $allowed_user_types = ['admin', 'user'];
-        if (!in_array($user_type, $allowed_user_types)) {
-            $errors[] = "Invalid user type selected.";
-        }
-
-        if (empty($errors)) {
-            try {
-                $stmt = $conn->prepare("SELECT id FROM users WHERE email = :email");
-                $stmt->execute(['email' => $email]);
-                if ($stmt->fetch()) {
-                    $errors[] = "Email is already registered.";
-                }
-            } catch (PDOException $e) {
-                $errors[] = "Database error: " . htmlspecialchars($e->getMessage());
-            }
-        }
-
-        if (empty($errors)) {
-            $password_hash = password_hash($password, PASSWORD_BCRYPT);
-
-            try {
-                $stmt = $conn->prepare("INSERT INTO users (email, user_type, password_hash)
-                                        VALUES (:email, :user_type, :password_hash)");
-                $stmt->execute([
-                    'email' => $email,
-                    'user_type' => $user_type,
-                    'password_hash' => $password_hash
-                ]);
-
-                $success = "Registration successful! You can now <a href='login.php'>log in</a>.";
-                $_SESSION['register_attempts'] = 0;
-            } catch (PDOException $e) {
-                $errors[] = "Registration failed: " . htmlspecialchars($e->getMessage());
-            }
-        }
-    }
+// Message display
+function showMessage($message) {
+    echo "<div class='message-box'>$message</div>";
 }
 ?>
 
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Secuno Register</title>
-  <style>
-    body {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: 'Poppins', sans-serif;
-      background-color: #fff;
-    }
-    .container {
-      display: flex;
-      height: 100vh;
-    }
-    .register-section {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      padding: 40px;
-      background: #fff;
-    }
-    .logo {
-      position: absolute;
-      top: 20px;
-      left: 30px;
-      font-size: 24px;
-      font-weight: bold;
-    }
-    .logo span {
-      color: #00b0f0;
-    }
-    .register-form {
-      width: 100%;
-      max-width: 400px;
-    }
-    .register-form h2 {
-      margin-bottom: 20px;
-      font-size: 28px;
-    }
-    .register-form input, .register-form select {
-      width: 100%;
-      padding: 12px;
-      margin-bottom: 15px;
-      border: 1px solid #ccc;
-      border-radius: 6px;
-    }
-    .register-form button {
-      width: 100%;
-      padding: 12px;
-      background-color: #00004d;
-      color: white;
-      font-size: 16px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-    }
-    .register-form .message {
-      margin-bottom: 10px;
-      font-size: 14px;
-    }
-    .register-form .message.error {
-      color: red;
-    }
-    .register-form .message.success {
-      color: green;
-    }
-    .register-form .login-link {
-      margin-top: 15px;
-      font-size: 14px;
-      text-align: center;
-    }
-    .register-form .login-link a {
-      color: #00b0f0;
-      text-decoration: none;
-    }
-    .image-section {
-      flex: 1;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      background: #fff;
-    }
-    .image-section img {
-      width: 300px;
-      max-width: 100%;
-    }
-  </style>
+    <title>Register</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #f4f4f4;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        form {
+            background: white;
+            padding: 30px 40px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            width: 350px;
+        }
+
+        h2 {
+            text-align: center;
+            color: #333;
+        }
+
+        label {
+            font-weight: bold;
+            margin-top: 10px;
+            display: block;
+            color: #555;
+        }
+
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 10px 12px;
+            margin: 8px 0 16px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            box-sizing: border-box;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #3f8efc;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: 0.3s;
+        }
+
+        button:hover {
+            background-color: #296ed9;
+        }
+
+        .message-box {
+            margin: 20px auto;
+            width: 90%;
+            max-width: 500px;
+            padding: 15px;
+            background-color: #eaf7ea;
+            border-left: 6px solid #4CAF50;
+            border-radius: 8px;
+            color: #2e7d32;
+            font-size: 15px;
+            text-align: center;
+        }
+
+        .message-box:empty {
+            display: none;
+        }
+    </style>
 </head>
 <body>
 
-<div class="container">
-  <div class="register-section">
-    <div class="logo">
-      <span>Secuno</span>
-    </div>
-    <div class="register-form">
-      <h2>Sign Up</h2>
+<form method="POST" action="">
+    <h2>User Registration</h2>
+    <label>Email (@gmail.com only)</label>
+    <input type="email" name="email" required>
 
-      <?php if (!empty($errors)): ?>
-        <div class="message error">
-          <?php foreach ($errors as $error): ?>
-            <p><?= htmlspecialchars($error) ?></p>
-          <?php endforeach; ?>
-        </div>
-      <?php elseif ($success): ?>
-        <div class="message success">
-          <p><?= $success ?></p>
-        </div>
-      <?php endif; ?>
+    <label>Password</label>
+    <input type="password" name="password" required>
 
-      <form action="register.php" method="POST" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($_SESSION['csrf_token']) ?>">
-
-        <input type="email" name="email" placeholder="Enter Email" required>
-
-        <select name="user_type" required>
-          <option value="">Select User Type</option>
-          <option value="user">User</option>
-          <option value="admin">Admin</option>
-        </select>
-
-        <input type="password" name="password" placeholder="Password" required>
-        <input type="password" name="confirm_password" placeholder="Confirm Password" required>
-
-        <button type="submit">Register</button>
-      </form>
-
-      <div class="login-link">
-        Already have an account? <a href="login.php">Log In here!</a>
-      </div>
-    </div>
-  </div>
-
-  <div class="image-section">
-    <img src="../image/doctor.jpg" alt="Doctor">
-  </div>
-</div>
+    <button type="submit">Register</button>
+</form>
 
 </body>
 </html>
