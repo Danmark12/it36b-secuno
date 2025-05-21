@@ -190,8 +190,8 @@
             <span>Sec</span><span>uno</span>
         </div>
         <div class="auth-buttons">
-            <a href="feature/login.php">Log In</a>
-            <a href="feature/register.php" class="signup-button">Sign Up</a>
+            <a href="login.php">Log In</a>
+            <a href="register.php" class="signup-button">Sign Up</a>
         </div>
     </header>
 
