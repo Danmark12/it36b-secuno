@@ -11,12 +11,10 @@ header("X-Frame-Options: DENY");
 // Content-Security-Policy:
 // default-src 'self' - Only allow resources from the same origin by default.
 // style-src 'self' https://fonts.googleapis.com 'sha256-FADzL39s+Fvj2RHZFy2SJEEA/Cb/phGFGdAQpXu3j7w=';
-//    'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
-//    !! IMPORTANT: The SHA256 hash below is CRUCIAL for your INLINE <style> block.
-//    If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
-//    The hash provided here ('sha256-FADzL39s+Fvj2RHZFy2SJEEA/Cb/phGFGdAQpXu3j7w=') is a placeholder.
-//    You will need to generate the correct hash for your specific CSS content.
-//    You can usually find the correct hash in browser developer console warnings if it's incorrect.
+//    'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
+//    !! IMPORTANT: The SHA256 hash below is CRUCIAL for your INLINE <style> block.
+//    If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
+//    You can usually find the correct hash in browser developer console warnings if it's incorrect.
 // font-src 'self' https://fonts.gstatic.com - Google Fonts fonts.
 header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fonts.googleapis.com 'sha256-FADzL39s+Fvj2RHZFy2SJEEA/Cb/phGFGdAQpXu3j7w='; font-src 'self' https://fonts.gstatic.com;");
 
@@ -26,11 +24,10 @@ $success = '';
 
 // Check if user is coming from login.php and has an OTP pending
 // If not, redirect them back to login page and show an error (using the $errors array)
-if (!isset($_SESSION['otp_user_id']) || !isset($_SESSION['otp_email']) || !isset($_SESSION['temp_user_type'])) {
+if (!isset($_SESSION['otp_user_id']) || !isset($_SESSION['otp_email'])) {
     // Clear any leftover OTP session data before redirecting
     unset($_SESSION['otp_user_id']);
     unset($_SESSION['otp_email']);
-    unset($_SESSION['temp_user_type']); // Also unset the temporary user type
     unset($_SESSION['otp_csrf_token']);
 
     // Set an error message to be displayed on the login page
@@ -41,7 +38,6 @@ if (!isset($_SESSION['otp_user_id']) || !isset($_SESSION['otp_email']) || !isset
 
 $user_id_for_otp = $_SESSION['otp_user_id'];
 $user_email_for_otp = $_SESSION['otp_email'];
-$temp_user_type = $_SESSION['temp_user_type']; // Retrieve temporary user type
 
 // --- CSRF Token Generation (for OTP form) ---
 // Use a different CSRF token for this form to avoid conflicts with login.php's token.
@@ -86,8 +82,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($user_otp === $stored_otp['otp_code'] && $current_time < $expiry_time) {
                         // OTP is valid! Finalize login.
 
-                        // Fetch full user details again to ensure current data (optional, but good practice)
-                        // This also ensures 'user_type' is fresh from DB, not just session.
+                        // Fetch full user details for session (important: don't rely solely on $_SESSION['otp_user_id'])
+                        // We need the user_type from the 'users' table
                         $stmt = $conn->prepare("SELECT id, email, user_type FROM users WHERE id = :user_id LIMIT 1");
                         $stmt->execute(['user_id' => $user_id_for_otp]);
                         $user_details = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -98,32 +94,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                             $_SESSION['user_id'] = $user_details['id'];
                             $_SESSION['email'] = $user_details['email'];
-                            $_SESSION['user_type'] = $user_details['user_type']; // Set permanent user type
+                            $_SESSION['user_type'] = $user_details['user_type']; // Store user type in session
                             $_SESSION['loggedin'] = true; // Mark user as logged in
 
-                            // Clear OTP-related and temporary session variables from the session for security
+                            // Clear OTP-related session variables from the session for security
                             unset($_SESSION['otp_user_id']);
                             unset($_SESSION['otp_email']);
-                            unset($_SESSION['temp_user_type']); // Unset the temporary user type
                             unset($_SESSION['otp_csrf_token']);
 
                             // Invalidate/delete the used OTP from the database to prevent replay attacks
+                            // Deleting all OTPs for this user ID on successful verification is a robust approach.
                             $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id")->execute(['user_id' => $user_id_for_otp]);
 
-                            // --- Redirect based on user_type (after successful OTP verification) ---
-                            switch ($user_details['user_type']) {
-                                case 'admin':
-                                    header("Location: admin_dashboard.php");
-                                    break;
-                                case 'user':
-                                default: // Default to user_home.php if user_type is 'user' or unrecognized
-                                    header("Location: user_home.php");
-                                    break;
+                            // --- Redirect based on user type ---
+                            if ($user_details['user_type'] === 'admin') {
+                                header("Location: admin_dashboard.php");
+                                exit();
+                            } else {
+                                header("Location: user_home.php");
+                                exit();
                             }
-                            exit();
 
                         } else {
-                            $errors[] = "User not found after OTP verification. Please try logging in again.";
+                            $errors[] = "User data could not be retrieved after OTP verification. Please try logging in again.";
+                            // Log this critical error for debugging
+                            error_log("SECURITY ALERT: User ID {$user_id_for_otp} found in OTP but not in users table. Possible data inconsistency or attack.");
                             // Invalidate OTP as user lookup failed
                             $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id")->execute(['user_id' => $user_id_for_otp]);
                         }
@@ -131,10 +126,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         $errors[] = "Invalid or expired OTP. Please try logging in again to get a new code.";
                         // Invalidate the OTP to prevent reuse after failure or expiration
+                        // If an invalid OTP is entered, or it expires, delete it to prevent further attempts on that specific OTP.
                         $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id")->execute(['user_id' => $user_id_for_otp]);
                     }
                 } else {
-                    $errors[] = "No OTP found for this user. Please try logging in again.";
+                    $errors[] = "No active OTP found for this account. Please try logging in again.";
                 }
 
             } catch (PDOException $e) {

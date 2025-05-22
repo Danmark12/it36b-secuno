@@ -1,45 +1,43 @@
 <?php
 // db/config.php - Database connection and global settings
-// This file contains the database connection setup and a utility function.
-// It should be included at the beginning of any script that needs database access.
 
-// Enable error reporting (disable in production for security)
+// Start session only if not already started
+if (session_status() === PHP_SESSION_NONE) {
+    ini_set('session.gc_maxlifetime', 1800); // 30 minutes
+    ini_set('session.cookie_lifetime', 1800); // 30 minutes
+    session_start();
+}
+
+// Enable error reporting (disable in production)
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
 // Database connection parameters
-$host = 'localhost';        // Your database host, e.g., 'localhost' or '127.0.0.1'
-$db   = 'secuno';          // Your actual database name
-$user = 'your_username';   // Your MySQL username
-$pass = 'your_password';   // Your MySQL password
-$charset = 'utf8mb4';      // Character set for the database connection
+$host = 'localhost';
+$db   = 'secuno';
+$user = 'your_username';   // <-- change to your actual DB username
+$pass = 'your_password';   // <-- change to your actual DB password
+$charset = 'utf8mb4';
 
-// Data Source Name (DSN) for PDO
 $dsn = "mysql:host=$host;dbname=$db;charset=$charset";
-
-// PDO options for a robust connection
 $options = [
-    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION, // Throw exceptions on errors
-    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,       // Return associative arrays for fetches
-    PDO::ATTR_EMULATE_PREPARES   => false,                  // Use real prepared statements (more secure)
+    PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
+    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+    PDO::ATTR_EMULATE_PREPARES   => false,
 ];
 
 try {
-    // Establish the PDO database connection
     $conn = new PDO($dsn, $user, $pass, $options);
 } catch (PDOException $e) {
-    // Handle database connection errors securely.
-    // In a production environment, you would log this error and display a generic message to the user.
-    error_log("Database connection failed: " . $e->getMessage()); // Log the error
-    echo 'Database connection failed. Please try again later.'; // Display a user-friendly message
-    exit; // Stop script execution
+    error_log("Database connection failed: " . $e->getMessage());
+    echo 'Database connection failed. Please try again later.';
+    exit;
 }
 
-// Function to display styled messages (used in verify.php)
-// This function outputs a complete HTML page with a centered message box.
+// Utility function to show styled messages
 function showMessage($message, $isError = false) {
-    $borderColor = $isError ? '#cc0000' : '#4CAF50'; // Red for error, green for success
+    $borderColor = $isError ? '#cc0000' : '#4CAF50';
     echo "<!DOCTYPE html>
     <html>
     <head>
@@ -64,7 +62,7 @@ function showMessage($message, $isError = false) {
                 color: #333;
                 max-width: 500px;
                 text-align: center;
-                word-wrap: break-word; /* Ensure long messages wrap */
+                word-wrap: break-word;
             }
         </style>
     </head>

@@ -208,10 +208,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     // Ensure any existing lockout record is removed on successful login
                     $conn->prepare("DELETE FROM account_lockouts WHERE user_id = :user_id")->execute(['user_id' => $user['id']]);
 
-                    // Store user_id, email, and user_type temporarily in session for OTP verification
-                    $_SESSION['otp_user_id'] = $user['id'];
-                    $_SESSION['otp_email'] = $user['email'];
-                    $_SESSION['temp_user_type'] = $user['user_type']; // Store user type temporarily
 
                     // Generate OTP
                     $otp_code = strval(random_int(100000, 999999)); // 6-digit OTP, ensure string
@@ -227,6 +223,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ])) {
                         // Send OTP via email
                         if (sendOtpEmail($user['email'], $otp_code)) {
+                            // Store user_id and email temporarily in session for OTP verification
+                            $_SESSION['otp_user_id'] = $user['id'];
+                            $_SESSION['otp_email'] = $user['email'];
+
                             // Redirect to OTP verification page
                             header('Location: verify_otp.php');
                             exit();
