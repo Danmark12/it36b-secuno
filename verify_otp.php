@@ -1,19 +1,37 @@
-.<?php
-session_start();
+<?php
+// verify_otp.php - OTP verification page
+require_once 'db/config.php'; // Include the database configuration and session start
 
-require_once 'db/config.php';
+require_once 'vendor/autoload.php'; // For PHPMailer (though not used directly here, good to keep consistent)
 
 // Security Headers
 header("X-Content-Type-Options: nosniff");
 header("X-Frame-Options: DENY");
-header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;");
+
+// Content-Security-Policy:
+// default-src 'self' - Only allow resources from the same origin by default.
+// style-src 'self' https://fonts.googleapis.com 'sha256-FADzL39s+Fvj2RHZFy2SJEEA/Cb/phGFGdAQpXu3j7w=';
+//    'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
+//    !! IMPORTANT: The SHA256 hash below is CRUCIAL for your INLINE <style> block.
+//    If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
+//    You can usually find the correct hash in browser developer console warnings if it's incorrect.
+// font-src 'self' https://fonts.gstatic.com - Google Fonts fonts.
+header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fonts.googleapis.com 'sha256-FADzL39s+Fvj2RHZFy2SJEEA/Cb/phGFGdAQpXu3j7w='; font-src 'self' https://fonts.gstatic.com;");
+
 
 $errors = [];
 $success = '';
 
 // Check if user is coming from login.php and has an OTP pending
+// If not, redirect them back to login page and show an error (using the $errors array)
 if (!isset($_SESSION['otp_user_id']) || !isset($_SESSION['otp_email'])) {
-    // If not, redirect them back to login page
+    // Clear any leftover OTP session data before redirecting
+    unset($_SESSION['otp_user_id']);
+    unset($_SESSION['otp_email']);
+    unset($_SESSION['otp_csrf_token']);
+
+    // Set an error message to be displayed on the login page
+    $_SESSION['login_error_message'] = "Your OTP session has expired or is invalid. Please try logging in again.";
     header('Location: login.php');
     exit();
 }
@@ -22,7 +40,7 @@ $user_id_for_otp = $_SESSION['otp_user_id'];
 $user_email_for_otp = $_SESSION['otp_email'];
 
 // --- CSRF Token Generation (for OTP form) ---
-// Use a different CSRF token for this form to avoid conflicts with login.php
+// Use a different CSRF token for this form to avoid conflicts with login.php's token.
 function getOtpCsrfToken() {
     if (empty($_SESSION['otp_csrf_token'])) {
         $_SESSION['otp_csrf_token'] = bin2hex(random_bytes(32));
@@ -34,53 +52,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // CSRF token validation
     if (!isset($_POST['otp_csrf_token']) || $_POST['otp_csrf_token'] !== getOtpCsrfToken()) {
         $errors[] = "Invalid CSRF token. Please try again.";
+        // Regenerate token on failure
+        unset($_SESSION['otp_csrf_token']);
     } else {
         $user_otp = trim($_POST['otp_code'] ?? '');
 
         if (empty($user_otp)) {
             $errors[] = "Please enter the OTP.";
-        } elseif (!preg_match('/^\d{6}$/', $user_otp)) {
+        } elseif (!preg_match('/^\d{6}$/', $user_otp)) { // Ensure it's exactly 6 digits
             $errors[] = "Invalid OTP format. It should be 6 digits.";
         }
 
         if (empty($errors)) {
             try {
                 // Fetch the OTP from the database
+                // ORDER BY created_at DESC ensures we get the latest OTP if multiple exist for a user.
                 $stmt = $conn->prepare("SELECT otp_code, expires_at FROM otp_codes WHERE user_id = :user_id ORDER BY created_at DESC LIMIT 1");
                 $stmt->execute(['user_id' => $user_id_for_otp]);
                 $stored_otp = $stmt->fetch(PDO::FETCH_ASSOC);
 
+                // Add a small delay to deter brute-force attempts on OTPs
+                usleep(rand(200000, 500000)); // Delay between 0.2 to 0.5 seconds
+
                 if ($stored_otp) {
                     // Check if OTP matches and is not expired
-                    if ($user_otp === $stored_otp['otp_code'] && new DateTime() < new DateTime($stored_otp['expires_at'])) {
-                        // OTP is valid! Finalize login.
-                        $success = "OTP verified successfully. Logging you in...";
+                    $current_time = new DateTime();
+                    $expiry_time = new DateTime($stored_otp['expires_at']);
 
-                        // Fetch user details for session (important: don't rely solely on $_SESSION['otp_user_id'])
+                    if ($user_otp === $stored_otp['otp_code'] && $current_time < $expiry_time) {
+                        // OTP is valid! Finalize login.
+
+                        // Fetch full user details for session (important: don't rely solely on $_SESSION['otp_user_id'])
                         $stmt = $conn->prepare("SELECT id, email, user_type FROM users WHERE id = :user_id LIMIT 1");
                         $stmt->execute(['user_id' => $user_id_for_otp]);
                         $user_details = $stmt->fetch(PDO::FETCH_ASSOC);
 
                         if ($user_details) {
                             // --- Session Security ---
-                            session_regenerate_id(true); // Regenerate session ID to prevent session fixation
-
-                            // Set secure and HttpOnly flags for cookies
-                            // This should typically be set in php.ini or at the very start globally
-                            // ini_set('session.cookie_httponly', 1);
-                            // ini_set('session.cookie_secure', 1); // IMPORTANT: Only if you are on HTTPS
+                            session_regenerate_id(true); // Regenerate session ID to prevent session fixation and hijacking
 
                             $_SESSION['user_id'] = $user_details['id'];
                             $_SESSION['email'] = $user_details['email'];
                             $_SESSION['user_type'] = $user_details['user_type'];
-                            $_SESSION['loggedin'] = true;
+                            $_SESSION['loggedin'] = true; // Mark user as logged in
 
-                            // Clear OTP-related session variables
+                            // Clear OTP-related session variables from the session for security
                             unset($_SESSION['otp_user_id']);
                             unset($_SESSION['otp_email']);
                             unset($_SESSION['otp_csrf_token']);
 
-                            // Invalidate/delete the used OTP from the database
+                            // Invalidate/delete the used OTP from the database to prevent replay attacks
+                            // Deleting all OTPs for this user ID on successful verification is a robust approach.
                             $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id")->execute(['user_id' => $user_id_for_otp]);
 
                             // Redirect to dashboard or home page
@@ -95,6 +117,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     } else {
                         $errors[] = "Invalid or expired OTP. Please try logging in again to get a new code.";
                         // Invalidate the OTP to prevent reuse after failure or expiration
+                        // If an invalid OTP is entered, or it expires, delete it to prevent further attempts on that specific OTP.
                         $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id")->execute(['user_id' => $user_id_for_otp]);
                     }
                 } else {
@@ -102,13 +125,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
 
             } catch (PDOException $e) {
-                error_log("OTP verification error: " . $e->getMessage());
+                // Log the database error for administrator
+                error_log("OTP verification database error: " . $e->getMessage());
                 $errors[] = "An unexpected error occurred during OTP verification. Please try again.";
             }
         }
     }
 }
 
+// Get the current CSRF token for the form (even on initial page load)
 $otp_csrf_token_value = getOtpCsrfToken();
 ?>
 
@@ -120,6 +145,7 @@ $otp_csrf_token_value = getOtpCsrfToken();
     <title>Verify OTP</title>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
     <style>
+        /* Your CSS styles go here. If you modify these, you MUST regenerate the CSP SHA256 hash. */
         body {
             box-sizing: border-box;
             margin: 0;
@@ -225,17 +251,13 @@ $otp_csrf_token_value = getOtpCsrfToken();
                     <p><?= htmlspecialchars($error) ?></p>
                 <?php endforeach; ?>
             </div>
-        <?php elseif ($success): ?>
-            <div class="message success">
-                <p><?= htmlspecialchars($success) ?></p>
-            </div>
         <?php endif; ?>
 
         <p>An OTP has been sent to your email: <strong><?= htmlspecialchars($user_email_for_otp) ?></strong>. Please enter it below.</p>
 
         <form method="POST" action="" autocomplete="off">
             <input type="hidden" name="otp_csrf_token" value="<?= htmlspecialchars($otp_csrf_token_value) ?>">
-            <input type="text" name="otp_code" placeholder="Enter OTP (6 digits)" required maxlength="6">
+            <input type="text" name="otp_code" placeholder="Enter OTP (6 digits)" required maxlength="6" inputmode="numeric" pattern="[0-9]{6}">
             <button type="submit">Verify OTP</button>
         </form>
     </div>

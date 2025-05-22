@@ -1,22 +1,35 @@
 <?php
-session_start();
+// login.php - User login page
+require_once 'db/config.php'; // Include the database configuration and session start
 
-require_once 'db/config.php';
-require_once 'vendor/autoload.php'; // For PHPMailer
+require_once 'vendor/autoload.php'; // Include PHPMailer autoload
 
 use PHPMailer\PHPMailer\PHPMailer;
 use PHPMailer\PHPMailer\Exception;
 
-// --- Security Headers ---
+// --- Security Headers (always send these) ---
 header("X-Content-Type-Options: nosniff");
 header("X-Frame-Options: DENY");
-header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self' https://www.google.com https://www.gstatic.com; frame-src https://www.google.com;"); // Adjusted for reCAPTCHA
+
+// Content-Security-Policy:
+// default-src 'self' - Only allow resources from the same origin by default.
+// style-src 'self' https://fonts.googleapis.com 'sha256-ZFNsDbSb3zuYkHuMhs5yoI8ysgY4TaScXvWc8J57/Ak=';
+//    'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
+//    The SHA256 hash below is CRUCIAL for your INLINE <style> block.
+//    If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
+//    You can usually find the correct hash in browser developer console warnings if it's incorrect.
+// font-src 'self' https://fonts.gstatic.com - Google Fonts fonts.
+// script-src 'self' https://www.google.com https://www.gstatic.com;
+//    'self' for your own scripts, Google's domains for reCAPTCHA.
+// frame-src https://www.google.com; - Google reCAPTCHA iframe.
+header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fonts.googleapis.com 'sha256-ZFNsDbSb3zuYkHuMhs5yoI8ysgY4TaScXvWc8J57/Ak='; font-src 'self' https://fonts.gstatic.com; script-src 'self' https://www.google.com https://www.gstatic.com; frame-src https://www.google.com;");
 
 
 $errors = [];
 $success = '';
 
 // --- CSRF Token Generation (for login form) ---
+// This function gets or generates a CSRF token for the current session.
 function getCsrfToken() {
     if (empty($_SESSION['csrf_token'])) {
         $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
@@ -24,25 +37,35 @@ function getCsrfToken() {
     return $_SESSION['csrf_token'];
 }
 
-// --- Function to send OTP email ---
+/**
+ * Sends a One-Time Password (OTP) email to the user.
+ *
+ * @param string $email The recipient's email address.
+ * @param string $otp_code The generated OTP.
+ * @return bool True if the email was sent successfully, false otherwise.
+ */
 function sendOtpEmail($email, $otp_code) {
     $mail = new PHPMailer(true);
     try {
-        // Server settings for Gmail SMTP (same as your register.php)
+        // Server settings for Gmail SMTP (ensure these match your config for sending)
         $mail->isSMTP();
         $mail->Host       = 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
-        $mail->Username   = 'danmarkpetalcurin@gmail.com'; // Your Gmail address
-        $mail->Password   = 'qdal zfxu fsej bqqf';           // Your Gmail App Password
-        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
-        $mail->Port       = 587;
+        // !! IMPORTANT: REPLACE WITH YOUR GMAIL ADDRESS AND APP PASSWORD !!
+        // If 2FA is enabled on your Gmail, you MUST use an App Password.
+        // Go to your Google Account -> Security -> App passwords to generate one.
+        $mail->Username   = 'danmarkpetalcurin@gmail.com';     // <--- REPLACE WITH YOUR GMAIL ADDRESS
+        $mail->Password   = 'qdal zfxu fsej bqqf';        // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS; // Use TLS encryption
+        $mail->Port       = 587; // Port for TLS
 
         // Recipients
-        $mail->setFrom('danmarkpetalcurin@gmail.com', 'Secuno System');
-        $mail->addAddress($email);
+        // !! IMPORTANT: REPLACE WITH YOUR GMAIL ADDRESS !!
+        $mail->setFrom('danmarkpetalcurin@gmail.com', 'Secuno System'); // <--- REPLACE WITH YOUR GMAIL ADDRESS
+        $mail->addAddress($email); // Add a recipient
 
         // Content
-        $mail->isHTML(true);
+        $mail->isHTML(true); // Set email format to HTML
         $mail->Subject = "Your One-Time Password (OTP) for Secuno System";
         $mail->Body    = "Hello,<br><br>Your One-Time Password (OTP) for Secuno System login is: <strong>" . htmlspecialchars($otp_code) . "</strong><br><br>This OTP is valid for 5 minutes.<br><br>Do not share this code with anyone.<br><br>Best regards,<br>The Secuno System Team";
         $mail->AltBody = "Hello,\n\nYour One-Time Password (OTP) for Secuno System login is: " . htmlspecialchars($otp_code) . "\n\nThis OTP is valid for 5 minutes.\n\nDo not share this code with anyone.\n\nBest regards,\nThe Secuno System Team";
@@ -50,6 +73,7 @@ function sendOtpEmail($email, $otp_code) {
         $mail->send();
         return true;
     } catch (Exception $e) {
+        // Log the error for debugging, but don't expose too much detail to the user.
         error_log("OTP email could not be sent to {$email}. Mailer Error: {$mail->ErrorInfo}");
         return false;
     }
@@ -57,99 +81,117 @@ function sendOtpEmail($email, $otp_code) {
 
 // --- Main Login Process ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Honeypot check (same as register.php for consistency)
-    if (!empty($_POST['fax_number'])) {
-        // Silently fail or log bot attempt
-        $errors[] = "Login failed due to suspicious activity. Please try again."; // Generic error
-        // Or simply exit();
+    // CSRF token validation
+    if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== getCsrfToken()) {
+        $errors[] = "Invalid CSRF token. Please try again.";
+        // It's good practice to regenerate the token on failure to prevent re-submission attacks
+        unset($_SESSION['csrf_token']);
     } else {
-        // CSRF token validation
-        if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== getCsrfToken()) {
-            $errors[] = "Invalid CSRF token. Please try again.";
-        } else {
-            $email = trim($_POST['email'] ?? '');
-            $password = $_POST['password'] ?? '';
+        $email = trim($_POST['email'] ?? '');
+        $password = $_POST['password'] ?? '';
 
-            // Initialize or increment failed login attempts
-            $_SESSION['failed_login_attempts'] = $_SESSION['failed_login_attempts'] ?? 0;
-            // Get user's IP for rate limiting/CAPTCHA
-            $user_ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
+        // Basic input validation
+        if (empty($email) || empty($password)) {
+            $errors[] = "Email and password are required.";
+        } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+            $errors[] = "Invalid email format.";
+        }
 
-            // --- CAPTCHA Verification ---
-            // If failed attempts are 3 or more, require CAPTCHA
-            if ($_SESSION['failed_login_attempts'] >= 3) {
-                if (empty($_POST['g-recaptcha-response'])) {
-                    $errors[] = "Please complete the CAPTCHA challenge.";
-                } else {
-                    $recaptcha_secret = 'YOUR_RECAPTCHA_SECRET_KEY'; // REPLACE WITH YOUR ACTUAL reCAPTCHA SECRET KEY
-                    $response = file_get_contents("https://www.google.com/recaptcha/api/siteverify?secret=" . $recaptcha_secret . "&response=" . $_POST['g-recaptcha-response'] . "&remoteip=" . $user_ip);
-                    $responseKeys = json_decode($response, true);
+        // Initialize failed login attempts if not set
+        if (!isset($_SESSION['failed_login_attempts'])) {
+            $_SESSION['failed_login_attempts'] = 0;
+        }
 
-                    if (intval($responseKeys["success"]) !== 1) {
-                        $errors[] = "CAPTCHA verification failed. Please try again.";
-                        $_SESSION['failed_login_attempts']++; // Increment even on CAPTCHA failure
-                    }
+        $user_ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
+
+        // --- CAPTCHA Verification ---
+        // If failed attempts are 3 or more, require CAPTCHA
+        if ($_SESSION['failed_login_attempts'] >= 3) {
+            if (empty($_POST['g-recaptcha-response'])) {
+                $errors[] = "Please complete the CAPTCHA challenge.";
+            } else {
+                // !! IMPORTANT: REPLACE WITH YOUR ACTUAL reCAPTCHA SECRET KEY !!
+                $recaptcha_secret = 'YOUR_RECAPTCHA_SECRET_KEY'; // <--- REPLACE WITH YOUR ACTUAL reCAPTCHA SECRET KEY
+                $response = file_get_contents("https://www.google.com/recaptcha/api/siteverify?secret=" . urlencode($recaptcha_secret) . "&response=" . urlencode($_POST['g-recaptcha-response']) . "&remoteip=" . urlencode($user_ip));
+                $responseKeys = json_decode($response, true);
+
+                if (intval($responseKeys["success"]) !== 1) {
+                    $errors[] = "CAPTCHA verification failed. Please try again.";
+                    $_SESSION['failed_login_attempts']++; // Increment even on CAPTCHA failure
                 }
             }
+        }
 
-            if (empty($errors)) {
-                try {
-                    // Check if email exists in the database
-                    $stmt = $conn->prepare("SELECT id, password_hash, user_type, email FROM users WHERE email = :email LIMIT 1");
-                    $stmt->execute(['email' => $email]);
-                    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+        // Proceed only if no validation or CSRF errors
+        if (empty($errors)) {
+            try {
+                // Check if email exists in the database
+                // Using LIMIT 1 is good practice when expecting a single result.
+                $stmt = $conn->prepare("SELECT id, password_hash, user_type, email FROM users WHERE email = :email LIMIT 1");
+                $stmt->execute(['email' => $email]);
+                $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
-                    if ($user && password_verify($password, $user['password_hash'])) {
-                        // --- Password correct, now proceed to OTP ---
+                // Add a small delay for both successful and failed logins to deter brute-force attacks
+                // This makes it harder for an attacker to rapidly guess credentials.
+                usleep(rand(500000, 1000000)); // Delay between 0.5 to 1 second
 
-                        // Reset failed login attempts
-                        $_SESSION['failed_login_attempts'] = 0;
+                if ($user && password_verify($password, $user['password_hash'])) {
+                    // --- Password correct, now proceed to OTP ---
 
-                        // Generate OTP
-                        $otp_code = random_int(100000, 999999); // 6-digit OTP
-                        $otp_expiry = date("Y-m-d H:i:s", strtotime("+5 minutes")); // OTP valid for 5 minutes
+                    // Reset failed login attempts
+                    $_SESSION['failed_login_attempts'] = 0;
 
-                        // Store OTP in database
-                        $stmt = $conn->prepare("INSERT INTO otp_codes (user_id, otp_code, expires_at) VALUES (:user_id, :otp_code, :expires_at)");
-                        if ($stmt->execute([
-                            'user_id' => $user['id'],
-                            'otp_code' => $otp_code,
-                            'expires_at' => $otp_expiry
-                        ])) {
-                            // Send OTP via email
-                            if (sendOtpEmail($user['email'], $otp_code)) {
-                                // Store user_id temporarily in session for OTP verification
-                                $_SESSION['otp_user_id'] = $user['id'];
-                                $_SESSION['otp_email'] = $user['email'];
+                    // Generate OTP
+                    // Using random_int for cryptographically secure random numbers
+                    $otp_code = strval(random_int(100000, 999999)); // 6-digit OTP, ensure string
+                    $otp_expiry = date("Y-m-d H:i:s", strtotime("+5 minutes")); // OTP valid for 5 minutes
 
-                                // Redirect to OTP verification page
-                                header('Location: verify_otp.php');
-                                exit();
-                            } else {
-                                $errors[] = "Authentication successful, but could not send OTP email. Please try again or contact support.";
-                                // Optionally, delete the stored OTP if email sending failed
-                                $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id AND otp_code = :otp_code")->execute(['user_id' => $user['id'], 'otp_code' => $otp_code]);
-                            }
+                    // Store OTP in database
+                    // IMPORTANT: Delete any *old* unverified OTPs for this user before inserting a new one.
+                    // This prevents issues if a user requests multiple OTPs.
+                    $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id")->execute(['user_id' => $user['id']]);
+
+                    $stmt = $conn->prepare("INSERT INTO otp_codes (user_id, otp_code, expires_at) VALUES (:user_id, :otp_code, :expires_at)");
+                    if ($stmt->execute([
+                        'user_id' => $user['id'],
+                        'otp_code' => $otp_code,
+                        'expires_at' => $otp_expiry
+                    ])) {
+                        // Send OTP via email
+                        if (sendOtpEmail($user['email'], $otp_code)) {
+                            // Store user_id and email temporarily in session for OTP verification
+                            $_SESSION['otp_user_id'] = $user['id'];
+                            $_SESSION['otp_email'] = $user['email'];
+
+                            // Redirect to OTP verification page
+                            header('Location: verify_otp.php');
+                            exit();
                         } else {
-                            $errors[] = "Failed to generate and store OTP. Please try again.";
+                            $errors[] = "Authentication successful, but could not send OTP email. Please try again or contact support.";
+                            // Optionally, delete the stored OTP if email sending failed
+                            // This ensures a clean state if the email isn't sent.
+                            $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id AND otp_code = :otp_code")->execute(['user_id' => $user['id'], 'otp_code' => $otp_code]);
                         }
-
                     } else {
-                        // Invalid credentials
-                        $errors[] = "Invalid email or password.";
-                        $_SESSION['failed_login_attempts']++; // Increment failed attempts
+                        $errors[] = "Failed to generate and store OTP. Please try again.";
                     }
 
-                } catch (PDOException $e) {
-                    error_log("Login error: " . $e->getMessage());
-                    $errors[] = "An unexpected error occurred. Please try again later.";
+                } else {
+                    // Invalid credentials (email not found or password incorrect)
+                    $errors[] = "Invalid email or password.";
+                    $_SESSION['failed_login_attempts']++; // Increment failed attempts
                 }
+
+            } catch (PDOException $e) {
+                // Log the database error for administrator
+                error_log("Login database error: " . $e->getMessage());
+                $errors[] = "An unexpected error occurred. Please try again later.";
             }
         }
     }
 }
 
-// Get the current CSRF token for the form
+// Get the current CSRF token for the form (even on initial page load)
 $csrf_token_value = getCsrfToken();
 ?>
 
@@ -162,6 +204,7 @@ $csrf_token_value = getCsrfToken();
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
     <script src="https://www.google.com/recaptcha/api.js" async defer></script>
     <style>
+        /* Your CSS styles go here. If you modify these, you MUST regenerate the CSP SHA256 hash. */
         body {
             box-sizing: border-box;
             margin: 0;
@@ -249,14 +292,6 @@ $csrf_token_value = getCsrfToken();
             color: #2e7d32;
             border: 1px solid #4CAF50;
         }
-        .honeypot-field {
-            position: absolute;
-            left: -9999px;
-            opacity: 0;
-            height: 1px;
-            width: 1px;
-            overflow: hidden;
-        }
         /* Style for link to registration */
         .register-link {
             text-align: center;
@@ -285,24 +320,15 @@ $csrf_token_value = getCsrfToken();
                     <p><?= htmlspecialchars($error) ?></p>
                 <?php endforeach; ?>
             </div>
-        <?php elseif ($success): ?>
-            <div class="message success">
-                <p><?= htmlspecialchars($success) ?></p>
-            </div>
         <?php endif; ?>
 
         <form method="POST" action="" autocomplete="off">
             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrf_token_value) ?>">
 
-            <div class="honeypot-field">
-                <label for="fax_number">Fax Number</label>
-                <input type="text" id="fax_number" name="fax_number" tabindex="-1" autocomplete="off">
-            </div>
-
             <input type="email" name="email" placeholder="Enter Email" required value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
             <input type="password" name="password" placeholder="Enter Password" required>
 
-            <?php if ($_SESSION['failed_login_attempts'] >= 3): ?>
+            <?php if (isset($_SESSION['failed_login_attempts']) && $_SESSION['failed_login_attempts'] >= 3): ?>
                 <div class="g-recaptcha" data-sitekey="YOUR_RECAPTCHA_SITE_KEY"></div> <br>
             <?php endif; ?>
 
