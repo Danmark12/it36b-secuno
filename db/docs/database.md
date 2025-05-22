@@ -11,7 +11,8 @@ CREATE TABLE pending_users (
 CREATE TABLE users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     email VARCHAR(255) NOT NULL UNIQUE,
-    user_type ENUM('admin', 'user') NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    user_type VARCHAR(50),
+    password_hash VARCHAR(255),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
