@@ -110,8 +110,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($_POST['g-recaptcha-response'])) {
                 $errors[] = "Please complete the CAPTCHA challenge.";
             } else {
-                // !! IMPORTANT: REPLACE WITH YOUR ACTUAL reCAPTCHA SECRET KEY !!
-                $recaptcha_secret = 'YOUR_RECAPTCHA_SECRET_KEY'; // <--- REPLACE WITH YOUR ACTUAL reCAPTCHA SECRET KEY
+                // THIS IS YOUR SECRET KEY: 6LfeJ0QrAAAAAPJPLbNzE5Q9L0CfWyJ9dzcq7OHv
+                $recaptcha_secret = '6LfeJ0QrAAAAAPJPLbNzE5Q9L0CfWyJ9dzcq7OHv';
+
                 $response = file_get_contents("https://www.google.com/recaptcha/api/siteverify?secret=" . urlencode($recaptcha_secret) . "&response=" . urlencode($_POST['g-recaptcha-response']) . "&remoteip=" . urlencode($user_ip));
                 $responseKeys = json_decode($response, true);
 
@@ -329,7 +330,7 @@ $csrf_token_value = getCsrfToken();
             <input type="password" name="password" placeholder="Enter Password" required>
 
             <?php if (isset($_SESSION['failed_login_attempts']) && $_SESSION['failed_login_attempts'] >= 3): ?>
-                <div class="g-recaptcha" data-sitekey="YOUR_RECAPTCHA_SITE_KEY"></div> <br>
+                <div class="g-recaptcha" data-sitekey="6LfeJ0QrAAAAAGlPMpLLVKkBfryQyetzM4UVdgU1"></div> <br>
             <?php endif; ?>
 
             <button type="submit">Login</button>
