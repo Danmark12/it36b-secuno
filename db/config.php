@@ -4,9 +4,29 @@
 // It should be included at the beginning of any script that needs database access.
 
 // Enable error reporting (disable in production for security)
-ini_set('display_errors', 1);
-ini_set('display_startup_errors', 1);
+ini_set('display_errors', 1); // Set to 0 in production
+ini_set('display_startup_errors', 1); // Set to 0 in production
 error_reporting(E_ALL);
+
+// --- Session Security Configuration ---
+// Set session cookie to be HttpOnly to prevent client-side script access
+ini_set('session.cookie_httponly', 1);
+
+// Set session cookie to be secure (only send over HTTPS)
+// IMPORTANT: Set to 1 in production. For local development on HTTP, you might need to set it to 0.
+// Once deployed to a live server with HTTPS, change this to 1.
+// ini_set('session.cookie_secure', 1); // Uncomment and set to 1 if you are using HTTPS in production
+
+// Use strict mode for sessions to prevent session fixation attacks
+ini_set('session.use_strict_mode', 1);
+
+// Set session cookie lifetime (e.g., 2 hours). Adjust as needed.
+// This is the lifetime of the session ID cookie. The session data itself can persist longer.
+ini_set('session.cookie_lifetime', 7200); // 2 hours
+
+// Set global session garbage collection max lifetime (e.g., 2 hours).
+// This helps ensure session data is eventually cleaned up from the server.
+ini_set('session.gc_maxlifetime', 7200); // 2 hours
 
 // Database connection parameters
 $host = 'localhost';        // Your database host, e.g., 'localhost' or '127.0.0.1'
