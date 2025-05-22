@@ -1,17 +1,12 @@
 <?php
 // db/config.php - Database connection and global settings
-// This file contains the database connection setup and session start.
-
-// Set session-related INI settings FIRST, before session_start()
-ini_set('session.gc_maxlifetime', 1800); // 30 minutes
-ini_set('session.cookie_lifetime', 1800); // 30 minutes
-session_start(); // Start the session ONLY ONCE, as the very first thing after ini_set calls.
+// This file contains the database connection setup and a utility function.
+// It should be included at the beginning of any script that needs database access.
 
 // Enable error reporting (disable in production for security)
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
-
 
 // Database connection parameters
 $host = 'localhost';        // Your database host, e.g., 'localhost' or '127.0.0.1'

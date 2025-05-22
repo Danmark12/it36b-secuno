@@ -1,5 +1,5 @@
 <?php
-// login.php - User login page
+// login.php - User login page with account lockout and email notification
 require_once 'db/config.php'; // Include the database configuration and session start
 
 require_once 'vendor/autoload.php'; // Include PHPMailer autoload
@@ -27,6 +27,10 @@ header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fo
 
 $errors = [];
 $success = '';
+
+// --- Configuration Constants for Lockout ---
+const MAX_LOGIN_ATTEMPTS = 5; // Number of failed attempts before lockout
+const LOCKOUT_DURATION_SECONDS = 30; // How long the account is locked (in seconds)
 
 // --- CSRF Token Generation (for login form) ---
 // This function gets or generates a CSRF token for the current session.
@@ -79,13 +83,49 @@ function sendOtpEmail($email, $otp_code) {
     }
 }
 
+/**
+ * Sends an email notification when an account is locked.
+ *
+ * @param string $email The recipient's email address.
+ * @param string $unlock_time_formatted The formatted time when the account will unlock.
+ * @return bool True if the email was sent successfully, false otherwise.
+ */
+function sendAccountLockedEmail($email, $unlock_time_formatted) {
+    $mail = new PHPMailer(true);
+    try {
+        // Server settings for Gmail SMTP (should match sendOtpEmail)
+        $mail->isSMTP();
+        $mail->Host       = 'smtp.gmail.com';
+        $mail->SMTPAuth   = true;
+        $mail->Username   = 'danmarkpetalcurin@gmail.com';     // <--- REPLACE WITH YOUR GMAIL ADDRESS
+        $mail->Password   = 'qdal zfxu fsej bqqf';        // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port       = 587;
+
+        // Recipients
+        $mail->setFrom('danmarkpetalcurin@gmail.com', 'Secuno System'); // <--- REPLACE WITH YOUR GMAIL ADDRESS
+        $mail->addAddress($email);
+
+        // Content
+        $mail->isHTML(true);
+        $mail->Subject = "Account Locked Notification for Secuno System";
+        $mail->Body    = "Hello,<br><br>Your account has been temporarily locked due to too many failed login attempts.<br><br>You will be able to try logging in again after <strong>" . htmlspecialchars($unlock_time_formatted) . "</strong>.<br><br>If you did not attempt to log in, please secure your account and consider changing your password once unlocked.<br><br>Best regards,<br>The Secuno System Team";
+        $mail->AltBody = "Hello,\n\nYour account has been temporarily locked due to too many failed login attempts.\n\nYou will be able to try logging in again after " . htmlspecialchars($unlock_time_formatted) . ".\n\nIf you did not attempt to log in, please secure your account and consider changing your password once unlocked.\n\nBest regards,\nThe Secuno System Team";
+
+        $mail->send();
+        return true;
+    } catch (Exception $e) {
+        error_log("Account locked email could not be sent to {$email}. Mailer Error: {$mail->ErrorInfo}");
+        return false;
+    }
+}
+
 // --- Main Login Process ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // CSRF token validation
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== getCsrfToken()) {
         $errors[] = "Invalid CSRF token. Please try again.";
-        // It's good practice to regenerate the token on failure to prevent re-submission attacks
-        unset($_SESSION['csrf_token']);
+        unset($_SESSION['csrf_token']); // Regenerate token on failure
     } else {
         $email = trim($_POST['email'] ?? '');
         $password = $_POST['password'] ?? '';
@@ -97,22 +137,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $errors[] = "Invalid email format.";
         }
 
-        // Initialize failed login attempts if not set
+        $user_ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
+
+        // --- CAPTCHA Verification ---
+        // Initialize session-based failed attempts if not set (for reCAPTCHA display logic)
         if (!isset($_SESSION['failed_login_attempts'])) {
             $_SESSION['failed_login_attempts'] = 0;
         }
 
-        $user_ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
-
-        // --- CAPTCHA Verification ---
-        // If failed attempts are 3 or more, require CAPTCHA
+        // If session-based failed attempts are 3 or more, require CAPTCHA
         if ($_SESSION['failed_login_attempts'] >= 3) {
             if (empty($_POST['g-recaptcha-response'])) {
                 $errors[] = "Please complete the CAPTCHA challenge.";
             } else {
-                // THIS IS YOUR SECRET KEY: 6LfeJ0QrAAAAAPJPLbNzE5Q9L0CfWyJ9dzcq7OHv
-                $recaptcha_secret = '6LfeJ0QrAAAAAPJPLbNzE5Q9L0CfWyJ9dzcq7OHv';
-
+                $recaptcha_secret = '6LfeJ0QrAAAAAPJPLbNzE5Q9L0CfWyJ9dzcq7OHv'; // Your Secret Key
                 $response = file_get_contents("https://www.google.com/recaptcha/api/siteverify?secret=" . urlencode($recaptcha_secret) . "&response=" . urlencode($_POST['g-recaptcha-response']) . "&remoteip=" . urlencode($user_ip));
                 $responseKeys = json_decode($response, true);
 
@@ -123,35 +161,64 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
         }
 
-        // Proceed only if no validation or CSRF errors
+        // Proceed only if no validation or CSRF errors so far
         if (empty($errors)) {
             try {
-                // Check if email exists in the database
-                // Using LIMIT 1 is good practice when expecting a single result.
-                $stmt = $conn->prepare("SELECT id, password_hash, user_type, email FROM users WHERE email = :email LIMIT 1");
+                // Fetch user details including failed_login_attempts from the 'users' table
+                $stmt = $conn->prepare("SELECT id, password_hash, user_type, email, failed_login_attempts FROM users WHERE email = :email LIMIT 1");
                 $stmt->execute(['email' => $email]);
                 $user = $stmt->fetch(PDO::FETCH_ASSOC);
 
                 // Add a small delay for both successful and failed logins to deter brute-force attacks
-                // This makes it harder for an attacker to rapidly guess credentials.
                 usleep(rand(500000, 1000000)); // Delay between 0.5 to 1 second
 
-                if ($user && password_verify($password, $user['password_hash'])) {
+                $is_locked = false;
+                $unlock_time = null;
+
+                // --- Check for Account Lockout (Database-based) ---
+                if ($user) {
+                    $stmt_lock = $conn->prepare("SELECT unlock_at FROM account_lockouts WHERE user_id = :user_id LIMIT 1");
+                    $stmt_lock->execute(['user_id' => $user['id']]);
+                    $lockout_record = $stmt_lock->fetch(PDO::FETCH_ASSOC);
+
+                    if ($lockout_record) {
+                        $unlock_time = new DateTime($lockout_record['unlock_at']);
+                        $current_time = new DateTime();
+
+                        if ($current_time < $unlock_time) {
+                            $is_locked = true;
+                            $errors[] = "Your account is locked. Please try again after " . $unlock_time->format('H:i:s') . ".";
+                        } else {
+                            // Lockout has expired, remove the lockout record
+                            $conn->prepare("DELETE FROM account_lockouts WHERE user_id = :user_id")->execute(['user_id' => $user['id']]);
+                        }
+                    }
+                }
+
+                // If account is locked, do not proceed with password verification
+                if ($is_locked) {
+                    // Errors already set, just exit this block
+                } elseif ($user && password_verify($password, $user['password_hash'])) {
                     // --- Password correct, now proceed to OTP ---
 
-                    // Reset failed login attempts
+                    // Reset all failed login attempts for this user in the database
+                    $conn->prepare("UPDATE users SET failed_login_attempts = 0 WHERE id = :user_id")->execute(['user_id' => $user['id']]);
+                    // Also clear any session-based failed attempts
                     $_SESSION['failed_login_attempts'] = 0;
+                    // Ensure any existing lockout record is removed on successful login
+                    $conn->prepare("DELETE FROM account_lockouts WHERE user_id = :user_id")->execute(['user_id' => $user['id']]);
+
+                    // Store user_id, email, and user_type temporarily in session for OTP verification
+                    $_SESSION['otp_user_id'] = $user['id'];
+                    $_SESSION['otp_email'] = $user['email'];
+                    $_SESSION['temp_user_type'] = $user['user_type']; // Store user type temporarily
 
                     // Generate OTP
-                    // Using random_int for cryptographically secure random numbers
                     $otp_code = strval(random_int(100000, 999999)); // 6-digit OTP, ensure string
                     $otp_expiry = date("Y-m-d H:i:s", strtotime("+5 minutes")); // OTP valid for 5 minutes
 
                     // Store OTP in database
-                    // IMPORTANT: Delete any *old* unverified OTPs for this user before inserting a new one.
-                    // This prevents issues if a user requests multiple OTPs.
                     $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id")->execute(['user_id' => $user['id']]);
-
                     $stmt = $conn->prepare("INSERT INTO otp_codes (user_id, otp_code, expires_at) VALUES (:user_id, :otp_code, :expires_at)");
                     if ($stmt->execute([
                         'user_id' => $user['id'],
@@ -160,17 +227,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ])) {
                         // Send OTP via email
                         if (sendOtpEmail($user['email'], $otp_code)) {
-                            // Store user_id and email temporarily in session for OTP verification
-                            $_SESSION['otp_user_id'] = $user['id'];
-                            $_SESSION['otp_email'] = $user['email'];
-
                             // Redirect to OTP verification page
                             header('Location: verify_otp.php');
                             exit();
                         } else {
                             $errors[] = "Authentication successful, but could not send OTP email. Please try again or contact support.";
-                            // Optionally, delete the stored OTP if email sending failed
-                            // This ensures a clean state if the email isn't sent.
                             $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id AND otp_code = :otp_code")->execute(['user_id' => $user['id'], 'otp_code' => $otp_code]);
                         }
                     } else {
@@ -180,7 +241,33 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 } else {
                     // Invalid credentials (email not found or password incorrect)
                     $errors[] = "Invalid email or password.";
-                    $_SESSION['failed_login_attempts']++; // Increment failed attempts
+
+                    // Increment failed attempts in the database for the specific user
+                    if ($user) {
+                        $new_attempts = $user['failed_login_attempts'] + 1;
+                        $conn->prepare("UPDATE users SET failed_login_attempts = :attempts WHERE id = :user_id")->execute(['attempts' => $new_attempts, 'user_id' => $user['id']]);
+
+                        if ($new_attempts >= MAX_LOGIN_ATTEMPTS) {
+                            // Lock the account if attempts exceed threshold
+                            $lock_until_datetime = new DateTime();
+                            $lock_until_datetime->modify('+' . LOCKOUT_DURATION_SECONDS . ' seconds');
+                            $lock_until_db_format = $lock_until_datetime->format("Y-m-d H:i:s");
+                            $lock_until_display_format = $lock_until_datetime->format('H:i:s'); // Format for display in email/message
+
+                            $stmt_insert_lock = $conn->prepare("INSERT INTO account_lockouts (user_id, unlock_at) VALUES (:user_id, :unlock_at) ON DUPLICATE KEY UPDATE unlock_at = VALUES(unlock_at), locked_at = CURRENT_TIMESTAMP()");
+                            $stmt_insert_lock->execute(['user_id' => $user['id'], 'unlock_at' => $lock_until_db_format]);
+
+                            // Reset failed attempts in 'users' table after locking to prevent immediate re-lock after unlock
+                            $conn->prepare("UPDATE users SET failed_login_attempts = 0 WHERE id = :user_id")->execute(['user_id' => $user['id']]);
+
+                            $errors[] = "Your account has been locked due to too many failed login attempts. Please try again after " . $lock_until_display_format . ".";
+
+                            // Send account locked email
+                            sendAccountLockedEmail($user['email'], $lock_until_display_format);
+                        }
+                    }
+                    // Also increment session-based counter for reCAPTCHA trigger
+                    $_SESSION['failed_login_attempts']++;
                 }
 
             } catch (PDOException $e) {

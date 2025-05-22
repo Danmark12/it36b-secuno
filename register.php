@@ -184,7 +184,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $email = trim($_POST['email'] ?? '');
             $password = $_POST['password'] ?? '';
             $password_confirm = $_POST['password_confirm'] ?? ''; // Added password confirmation field
-            $user_type = 'student'; // Fixed user_type as 'student' as per your original code
+            $user_type = 'user'; // Fixed user_type as 'user' as per your original code
 
             // Validate input fields
             $errors = validateRegistrationInput($email, $password, $password_confirm, $errors);
@@ -339,13 +339,30 @@ $csrf_token_value = getCsrfToken();
         }
 
         /* Styles for the honeypot field - makes it invisible */
-        .honeypot-field {
+        /* .honeypot-field {
             position: absolute;
             left: -9999px; 
             opacity: 0;   
             height: 1px;
             width: 1px;
             overflow: hidden;
+        } */
+
+                /* Added for the new login link styling */
+        .login-link {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 15px;
+        }
+        .login-link a {
+            color: #00004d; /* Dark blue, matching your button */
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.3s ease;
+        }
+        .login-link a:hover {
+            color: #001a66; /* Slightly darker on hover */
+            text-decoration: underline;
         }
     </style>
 </head>
@@ -380,6 +397,9 @@ $csrf_token_value = getCsrfToken();
             <input type="password" name="password_confirm" placeholder="Confirm Password" required>
             <button type="submit">Register</button>
         </form>
+        <p class="login-link">
+            Already have an account? <a href="login.php">Login here</a>
+        </p>
     </div>
 </div>
 
