@@ -23,14 +23,15 @@ body {
   background: #031b5c;
   color: #fff;
   padding: 20px;
-  position: fixed;
+  position: fixed; /* Keep it fixed for consistent behavior */
   left: 0;
   top: 0;
   height: 100vh;
   display: flex;
   flex-direction: column;
   z-index: 1000;
-  transition: all 0.3s ease;
+  /* Added transform for initial hiding state, width and padding for smoother hide/show */
+  transition: transform 0.3s ease, width 0.3s ease, padding 0.3s ease;
 }
 
 .sidebar .logo {
@@ -73,7 +74,7 @@ body {
 
 /* ========== SIDEBAR CLOSE BUTTON ========== */
 .close-btn {
-  font-size: 20px;
+  font-size: 24px; /* Slightly larger for better clickability */
   color: #fff;
   background: transparent;
   border: none;
@@ -81,37 +82,31 @@ body {
   top: 20px;
   right: 20px;
   cursor: pointer;
-  display: none;
+  /* This button is always displayed inside the sidebar */
 }
 
-.sidebar.show .close-btn {
-  display: block;
-}
-
-.sidebar.hide {
-  width: 0 !important;
-  padding: 0 !important;
-  visibility: hidden !important;
-  opacity: 0 !important;
-  display: none !important;
-  pointer-events: none !important;
-}
-
-.sidebar.hide * {
-  display: none !important;
+/* Class to visually hide the sidebar */
+.sidebar.hidden { /* Renamed 'hide-sidebar' to 'hidden' for brevity and common usage */
+  transform: translateX(-100%);
+  width: 0; /* Collapse width */
+  padding: 0; /* Remove padding */
+  overflow: hidden; /* Hide content that goes out of bounds */
+  /* Hide elements within the sidebar when completely hidden, to prevent interaction */
+  pointer-events: none;
+  visibility: hidden;
 }
 
 /* ========== MAIN CONTENT ========== */
 .main {
   flex-grow: 1;
-  margin-left: 250px;
+  margin-left: 250px; /* Initially offset by sidebar width */
   padding: 20px;
-  transition: margin-left 0.3s ease;
+  transition: margin-left 0.3s ease, width 0.3s ease; /* Added width transition */
 }
 
 .main.full-width {
-  margin-left: 0 !important;
-  width: 100% !important;
+  margin-left: 0; /* When sidebar is hidden, main content takes full width */
+  width: 100%; /* Ensure full width */
 }
 
 /* ========== TOP BAR ========== */
@@ -137,7 +132,15 @@ body {
   border: none;
   cursor: pointer;
   color: #333;
+  /* The default state should be visible so it appears when the sidebar is hidden */
+  display: block; /* Make it visible by default */
 }
+
+/* When sidebar is NOT hidden (i.e., it's visible), hide the toggle button */
+.sidebar:not(.hidden) + .main .menu-toggle {
+    display: none;
+}
+
 
 .dashboard-title {
   font-size: 24px;
@@ -162,20 +165,22 @@ body {
   cursor: pointer;
 }
 
-/* ========== DASHBOARD CONTENT ========== */
-.content h2 {
+/* ========== DASHBOARD CONTENT (example styles) ========== */
+#contentArea h2 { /* Targeting contentArea specific headings */
   font-size: 28px;
   margin-bottom: 20px;
 }
 
 .cards {
   display: flex;
+  flex-wrap: wrap; /* Added for better responsiveness */
   gap: 20px;
   margin-bottom: 20px;
 }
 
 .card {
   flex: 1;
+  min-width: 200px; /* Ensure cards don't get too small */
   padding: 20px;
   border-radius: 8px;
   color: white;
@@ -201,7 +206,7 @@ body {
   background: #27ae60;
 }
 
-/* ========== RECENT USERS TABLE ========== */
+/* ========== RECENT USERS TABLE (example styles) ========== */
 .recent-users h3 {
   margin-bottom: 10px;
 }
@@ -225,24 +230,40 @@ body {
   background-color: #f9f9f9;
 }
 
-/* ========== RESPONSIVE ========== */
+/* ========== RESPONSIVE DESIGN ========== */
 @media (max-width: 768px) {
-  .container {
-    flex-direction: column;
+  .sidebar {
+    width: 250px; /* Maintain width when shown */
+    position: fixed; /* Keep it fixed */
+    transform: translateX(-100%); /* Start hidden on mobile */
+    box-shadow: 2px 0 5px rgba(0,0,0,0.2); /* Add shadow for visual separation */
+    padding: 20px; /* Ensure padding is there */
   }
 
-  .sidebar {
-    width: 100%;
-    height: auto;
-    position: relative;
+  .sidebar.show { /* This class will be added by JS when showing the sidebar */
+    transform: translateX(0%); /* Slide in when shown */
+  }
+
+  /* When sidebar is shown on mobile, also hide the toggle button */
+  .sidebar.show + .main .menu-toggle {
+    display: none;
+  }
+
+  .close-btn {
+    display: block; /* Always show close button on mobile */
+  }
+
+  .menu-toggle {
+    display: block; /* Always show menu toggle button on mobile */
   }
 
   .main {
-    margin-left: 0;
+    margin-left: 0; /* Main content always starts at 0 on mobile */
+    width: 100%; /* Take full width */
   }
 
   .cards {
-    flex-direction: column;
+    flex-direction: column; /* Stack cards vertically on mobile */
   }
 
   .card {
