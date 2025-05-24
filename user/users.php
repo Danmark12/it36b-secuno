@@ -76,9 +76,12 @@ require '../db/config.php';
                 <li> 
                     <a href="settings.php" data-page="settings.php"><i class="fas fa-cog"></i> Settings</a> 
                 </li> 
-                <li> 
-                    <a href="../feature/logout.php"><i class="fas fa-sign-out-alt"></i> Logout</a> 
-                </li> 
+<li>
+    <a href="logout.php" onclick="return confirm('Are you sure you want to log out?')">
+        <i class="fas fa-sign-out-alt"></i> Log Out
+    </a>
+</li>
+
             </ul> 
         </div> 
 
