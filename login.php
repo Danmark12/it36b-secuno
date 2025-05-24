@@ -14,13 +14,13 @@ header("X-Frame-Options: DENY");
 // Content-Security-Policy:
 // default-src 'self' - Only allow resources from the same origin by default.
 // style-src 'self' https://fonts.googleapis.com 'sha256-ZFNsDbSb3zuYkHuMhs5yoI8ysgY4TaScXvWc8J57/Ak=';
-//    'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
-//    The SHA256 hash below is CRUCIAL for your INLINE <style> block.
-//    If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
-//    You can usually find the correct hash in browser developer console warnings if it's incorrect.
+//      'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
+//      The SHA256 hash below is CRUCIAL for your INLINE <style> block.
+//      If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
+//      You can usually find the correct hash in browser developer console warnings if it's incorrect.
 // font-src 'self' https://fonts.gstatic.com - Google Fonts fonts.
 // script-src 'self' https://www.google.com https://www.gstatic.com;
-//    'self' for your own scripts, Google's domains for reCAPTCHA.
+//      'self' for your own scripts, Google's domains for reCAPTCHA.
 // frame-src https://www.google.com; - Google reCAPTCHA iframe.
 header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fonts.googleapis.com 'sha256-ZFNsDbSb3zuYkHuMhs5yoI8ysgY4TaScXvWc8J57/Ak='; font-src 'self' https://fonts.gstatic.com; script-src 'self' https://www.google.com https://www.gstatic.com; frame-src https://www.google.com;");
 
@@ -28,8 +28,10 @@ header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fo
 $errors = [];
 $success = '';
 
-// --- Configuration Constants for Lockout ---
-const MAX_LOGIN_ATTEMPTS = 5; // Number of failed attempts before lockout
+// --- Configuration Constants for Login Security ---
+const MAX_ATTEMPTS_BEFORE_CAPTCHA = 3; // Number of failed attempts before showing reCAPTCHA
+const MAX_ATTEMPTS_BEFORE_LOCKOUT_WARNING = 5; // Number of failed attempts before sending alert email
+const MAX_LOGIN_ATTEMPTS_TOTAL = 7; // Number of failed attempts before locking account
 const LOCKOUT_DURATION_SECONDS = 30; // How long the account is locked (in seconds)
 
 // --- CSRF Token Generation (for login form) ---
@@ -120,6 +122,41 @@ function sendAccountLockedEmail($email, $unlock_time_formatted) {
     }
 }
 
+/**
+ * Sends an alert email to the user about suspicious login attempts.
+ *
+ * @param string $email The recipient's email address.
+ * @param int $attempts_left The number of attempts remaining before lockout.
+ * @return bool True if the email was sent successfully, false otherwise.
+ */
+function sendAlertEmail($email, $attempts_left) {
+    $mail = new PHPMailer(true);
+    try {
+        $mail->isSMTP();
+        $mail->Host       = 'smtp.gmail.com';
+        $mail->SMTPAuth   = true;
+        $mail->Username   = 'danmarkpetalcurin@gmail.com';     // <--- REPLACE WITH YOUR GMAIL ADDRESS
+        $mail->Password   = 'qdal zfxu fsej bqqf';        // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
+        $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
+        $mail->Port       = 587;
+
+        $mail->setFrom('danmarkpetalcurin@gmail.com', 'Secuno System');
+        $mail->addAddress($email);
+
+        $mail->isHTML(true);
+        $mail->Subject = "⚠️ Security Alert: Unusual Login Attempts on Your Account";
+        $mail->Body    = "Hello,<br><br>We've detected unusual login attempts on your Secuno System account.<br><br><strong>Someone is trying to access your account. You have " . htmlspecialchars($attempts_left) . " more attempts left before your account is temporarily locked.</strong><br><br>If this was not you, please secure your account immediately or contact support.<br><br>Best regards,<br>The Secuno System Team";
+        $mail->AltBody = "Hello,\n\nWe've detected unusual login attempts on your Secuno System account.\n\nSomeone is trying to access your account. You have " . htmlspecialchars($attempts_left) . " more attempts left before your account is temporarily locked.\n\nIf this was not you, please secure your account immediately or contact support.\n\nBest regards,\nThe Secuno System Team";
+
+        $mail->send();
+        return true;
+    } catch (Exception $e) {
+        error_log("Alert email could not be sent to {$email}. Mailer Error: {$mail->ErrorInfo}");
+        return false;
+    }
+}
+
+
 // --- Main Login Process ---
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // CSRF token validation
@@ -139,14 +176,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
         $user_ip = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
 
-        // --- CAPTCHA Verification ---
         // Initialize session-based failed attempts if not set (for reCAPTCHA display logic)
         if (!isset($_SESSION['failed_login_attempts'])) {
             $_SESSION['failed_login_attempts'] = 0;
         }
 
         // If session-based failed attempts are 3 or more, require CAPTCHA
-        if ($_SESSION['failed_login_attempts'] >= 3) {
+        if ($_SESSION['failed_login_attempts'] >= MAX_ATTEMPTS_BEFORE_CAPTCHA) {
             if (empty($_POST['g-recaptcha-response'])) {
                 $errors[] = "Please complete the CAPTCHA challenge.";
             } else {
@@ -174,11 +210,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 $is_locked = false;
                 $unlock_time = null;
+                $user_id = $user['id'] ?? null; // Get user ID if user exists
 
                 // --- Check for Account Lockout (Database-based) ---
-                if ($user) {
+                if ($user_id) { // Only check if user exists
                     $stmt_lock = $conn->prepare("SELECT unlock_at FROM account_lockouts WHERE user_id = :user_id LIMIT 1");
-                    $stmt_lock->execute(['user_id' => $user['id']]);
+                    $stmt_lock->execute(['user_id' => $user_id]);
                     $lockout_record = $stmt_lock->fetch(PDO::FETCH_ASSOC);
 
                     if ($lockout_record) {
@@ -190,7 +227,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $errors[] = "Your account is locked. Please try again after " . $unlock_time->format('H:i:s') . ".";
                         } else {
                             // Lockout has expired, remove the lockout record
-                            $conn->prepare("DELETE FROM account_lockouts WHERE user_id = :user_id")->execute(['user_id' => $user['id']]);
+                            $conn->prepare("DELETE FROM account_lockouts WHERE user_id = :user_id")->execute(['user_id' => $user_id]);
+                            // Also reset failed attempts in the users table when lockout expires
+                            $conn->prepare("UPDATE users SET failed_login_attempts = 0 WHERE id = :user_id")->execute(['user_id' => $user_id]);
                         }
                     }
                 }
@@ -207,7 +246,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $_SESSION['failed_login_attempts'] = 0;
                     // Ensure any existing lockout record is removed on successful login
                     $conn->prepare("DELETE FROM account_lockouts WHERE user_id = :user_id")->execute(['user_id' => $user['id']]);
-
 
                     // Generate OTP
                     $otp_code = strval(random_int(100000, 999999)); // 6-digit OTP, ensure string
@@ -247,8 +285,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $new_attempts = $user['failed_login_attempts'] + 1;
                         $conn->prepare("UPDATE users SET failed_login_attempts = :attempts WHERE id = :user_id")->execute(['attempts' => $new_attempts, 'user_id' => $user['id']]);
 
-                        if ($new_attempts >= MAX_LOGIN_ATTEMPTS) {
-                            // Lock the account if attempts exceed threshold
+                        // Send alert email if attempts reach MAX_ATTEMPTS_BEFORE_LOCKOUT_WARNING
+                        if ($new_attempts === MAX_ATTEMPTS_BEFORE_LOCKOUT_WARNING) {
+                            $attempts_left_for_warning = MAX_LOGIN_ATTEMPTS_TOTAL - $new_attempts;
+                            sendAlertEmail($user['email'], $attempts_left_for_warning);
+                        }
+
+                        // Lock the account if attempts exceed MAX_LOGIN_ATTEMPTS_TOTAL
+                        if ($new_attempts >= MAX_LOGIN_ATTEMPTS_TOTAL) {
                             $lock_until_datetime = new DateTime();
                             $lock_until_datetime->modify('+' . LOCKOUT_DURATION_SECONDS . ' seconds');
                             $lock_until_db_format = $lock_until_datetime->format("Y-m-d H:i:s");
@@ -266,7 +310,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             sendAccountLockedEmail($user['email'], $lock_until_display_format);
                         }
                     }
-                    // Also increment session-based counter for reCAPTCHA trigger
+                    // Always increment session-based counter for reCAPTCHA trigger, even if user doesn't exist (to prevent enumeration)
                     $_SESSION['failed_login_attempts']++;
                 }
 
@@ -416,7 +460,7 @@ $csrf_token_value = getCsrfToken();
             <input type="email" name="email" placeholder="Enter Email" required value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
             <input type="password" name="password" placeholder="Enter Password" required>
 
-            <?php if (isset($_SESSION['failed_login_attempts']) && $_SESSION['failed_login_attempts'] >= 3): ?>
+            <?php if (isset($_SESSION['failed_login_attempts']) && $_SESSION['failed_login_attempts'] >= MAX_ATTEMPTS_BEFORE_CAPTCHA): ?>
                 <div class="g-recaptcha" data-sitekey="6LfeJ0QrAAAAAGlPMpLLVKkBfryQyetzM4UVdgU1"></div> <br>
             <?php endif; ?>
 
@@ -430,4 +474,4 @@ $csrf_token_value = getCsrfToken();
 </div>
 
 </body>
-</html>
+</html> 

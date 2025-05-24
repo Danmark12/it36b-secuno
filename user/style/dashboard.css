@@ -1,0 +1,50 @@
+/* style/dashboard.css */
+
+/* Styles for the content loaded into #contentArea */
+/* Tailwind handles much of the inner spacing and responsiveness,
+   but these classes provide custom visual enhancements. */
+
+.card {
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); /* Subtle shadow for cards */
+    transition: transform 0.2s ease-in-out; /* Hover effect */
+    border-radius: 12px; /* More rounded corners */
+    min-height: 160px; /* Ensure a minimum height for cards */
+}
+
+.card:hover {
+    transform: translateY(-5px); /* Lift effect on hover */
+}
+
+/* Table specific styles */
+.table-header {
+    background-color: #f9fafb; /* Lighter background for table header */
+}
+
+.table-row:hover {
+    background-color: #f3f4f6; /* Hover effect for table rows */
+}
+
+/* Custom colors to override or supplement Tailwind if needed */
+/* Ensure these values align with your overall theme */
+.bg-blue-600 { background-color: #3498db; } /* Secuno accent blue */
+.bg-yellow-500 { background-color: #f39c12; } /* Secuno accent yellow */
+.bg-green-600 { background-color: #27ae60; } /* Secuno accent green */
+.bg-indigo-600 { background-color: #663399; } /* A deeper indigo for buttons */
+.hover\:bg-indigo-700:hover { background-color: #552288; } /* Darker indigo on hover */
+
+/* Responsive adjustments for dashboard content */
+@media (max-width: 768px) {
+    /* These classes are already handled by Tailwind's responsive utilities
+       (e.g., grid-cols-1 md:grid-cols-3, flex-col sm:flex-row)
+       but adding them here explicitly for clarity if you prefer custom breakpoints. */
+    .grid.grid-cols-1.md\:grid-cols-3 {
+        grid-template-columns: 1fr; /* Force single column on mobile */
+    }
+
+    .flex-col.sm\:flex-row {
+        flex-direction: column; /* Stack buttons vertically on small screens */
+    }
+    .flex-col.sm\:flex-row a {
+        width: 100%; /* Full width for buttons */
+    }
+}

@@ -339,14 +339,14 @@ $csrf_token_value = getCsrfToken();
         }
 
         /* Styles for the honeypot field - makes it invisible */
-        /* .honeypot-field {
+        .honeypot-field {
             position: absolute;
             left: -9999px; 
             opacity: 0;   
             height: 1px;
             width: 1px;
             overflow: hidden;
-        } */
+        }
 
                 /* Added for the new login link styling */
         .login-link {
