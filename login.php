@@ -14,13 +14,13 @@ header("X-Frame-Options: DENY");
 // Content-Security-Policy:
 // default-src 'self' - Only allow resources from the same origin by default.
 // style-src 'self' https://fonts.googleapis.com 'sha256-ZFNsDbSb3zuYkHuMhs5yoI8ysgY4TaScXvWc8J57/Ak=';
-//      'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
-//      The SHA256 hash below is CRUCIAL for your INLINE <style> block.
-//      If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
-//      You can usually find the correct hash in browser developer console warnings if it's incorrect.
+//      'self' for inline styles, https://fonts.googleapis.com for Google Fonts CSS.
+//      The SHA256 hash below is CRUCIAL for your INLINE <style> block.
+//      If you modify the <style> block in this HTML, you MUST REGENERATE this hash.
+//      You can usually find the correct hash in browser developer console warnings if it's incorrect.
 // font-src 'self' https://fonts.gstatic.com - Google Fonts fonts.
 // script-src 'self' https://www.google.com https://www.gstatic.com;
-//      'self' for your own scripts, Google's domains for reCAPTCHA.
+//      'self' for your own scripts, Google's domains for reCAPTCHA.
 // frame-src https://www.google.com; - Google reCAPTCHA iframe.
 header("Content-Security-Policy: default-src 'self'; style-src 'self' https://fonts.googleapis.com 'sha256-ZFNsDbSb3zuYkHuMhs5yoI8ysgY4TaScXvWc8J57/Ak='; font-src 'self' https://fonts.gstatic.com; script-src 'self' https://www.google.com https://www.gstatic.com; frame-src https://www.google.com;");
 
@@ -44,12 +44,37 @@ function getCsrfToken() {
 }
 
 /**
+ * Logs user activity to the database.
+ *
+ * @param PDO $conn The database connection object.
+ * @param int|null $user_id The ID of the user, or null if not applicable (e.g., non-existent user).
+ * @param string $activity_type A short, descriptive type of activity (e.g., 'Login Success', 'Login Failed').
+ * @param string $description A more detailed description of the activity.
+ */
+function logUserActivity(PDO $conn, ?int $user_id, string $activity_type, string $description) {
+    $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'UNKNOWN';
+    try {
+        $stmt = $conn->prepare("INSERT INTO user_activity_logs (user_id, activity_type, description, ip_address) VALUES (:user_id, :activity_type, :description, :ip_address)");
+        $stmt->execute([
+            'user_id' => $user_id,
+            'activity_type' => $activity_type,
+            'description' => $description,
+            'ip_address' => $ip_address
+        ]);
+    } catch (PDOException $e) {
+        // Log the error but don't stop execution or expose details to the user
+        error_log("Failed to log user activity: " . $e->getMessage());
+    }
+}
+
+
+/**
  * Sends a One-Time Password (OTP) email to the user.
  *
  * @param string $email The recipient's email address.
  * @param string $otp_code The generated OTP.
  * @return bool True if the email was sent successfully, false otherwise.
- */
+*/
 function sendOtpEmail($email, $otp_code) {
     $mail = new PHPMailer(true);
     try {
@@ -61,7 +86,7 @@ function sendOtpEmail($email, $otp_code) {
         // If 2FA is enabled on your Gmail, you MUST use an App Password.
         // Go to your Google Account -> Security -> App passwords to generate one.
         $mail->Username   = 'danmarkpetalcurin@gmail.com';     // <--- REPLACE WITH YOUR GMAIL ADDRESS
-        $mail->Password   = 'qdal zfxu fsej bqqf';        // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
+        $mail->Password   = 'qdal zfxu fsej bqqf';         // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS; // Use TLS encryption
         $mail->Port       = 587; // Port for TLS
 
@@ -91,7 +116,7 @@ function sendOtpEmail($email, $otp_code) {
  * @param string $email The recipient's email address.
  * @param string $unlock_time_formatted The formatted time when the account will unlock.
  * @return bool True if the email was sent successfully, false otherwise.
- */
+*/
 function sendAccountLockedEmail($email, $unlock_time_formatted) {
     $mail = new PHPMailer(true);
     try {
@@ -100,7 +125,7 @@ function sendAccountLockedEmail($email, $unlock_time_formatted) {
         $mail->Host       = 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
         $mail->Username   = 'danmarkpetalcurin@gmail.com';     // <--- REPLACE WITH YOUR GMAIL ADDRESS
-        $mail->Password   = 'qdal zfxu fsej bqqf';        // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
+        $mail->Password   = 'qdal zfxu fsej bqqf';         // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port       = 587;
 
@@ -128,7 +153,7 @@ function sendAccountLockedEmail($email, $unlock_time_formatted) {
  * @param string $email The recipient's email address.
  * @param int $attempts_left The number of attempts remaining before lockout.
  * @return bool True if the email was sent successfully, false otherwise.
- */
+*/
 function sendAlertEmail($email, $attempts_left) {
     $mail = new PHPMailer(true);
     try {
@@ -136,7 +161,7 @@ function sendAlertEmail($email, $attempts_left) {
         $mail->Host       = 'smtp.gmail.com';
         $mail->SMTPAuth   = true;
         $mail->Username   = 'danmarkpetalcurin@gmail.com';     // <--- REPLACE WITH YOUR GMAIL ADDRESS
-        $mail->Password   = 'qdal zfxu fsej bqqf';        // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
+        $mail->Password   = 'qdal zfxu fsej bqqf';         // <--- REPLACE WITH YOUR GMAIL APP PASSWORD
         $mail->SMTPSecure = PHPMailer::ENCRYPTION_STARTTLS;
         $mail->Port       = 587;
 
@@ -163,6 +188,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== getCsrfToken()) {
         $errors[] = "Invalid CSRF token. Please try again.";
         unset($_SESSION['csrf_token']); // Regenerate token on failure
+        // Log CSRF failure - we don't have a user_id here directly
+        logUserActivity($conn, null, 'CSRF Failed', 'Invalid CSRF token submitted during login attempt.');
     } else {
         $email = trim($_POST['email'] ?? '');
         $password = $_POST['password'] ?? '';
@@ -225,11 +252,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if ($current_time < $unlock_time) {
                             $is_locked = true;
                             $errors[] = "Your account is locked. Please try again after " . $unlock_time->format('H:i:s') . ".";
+                            logUserActivity($conn, $user_id, 'Login Failed', 'Attempted login on locked account for email: ' . $email);
                         } else {
                             // Lockout has expired, remove the lockout record
                             $conn->prepare("DELETE FROM account_lockouts WHERE user_id = :user_id")->execute(['user_id' => $user_id]);
                             // Also reset failed attempts in the users table when lockout expires
                             $conn->prepare("UPDATE users SET failed_login_attempts = 0 WHERE id = :user_id")->execute(['user_id' => $user_id]);
+                            logUserActivity($conn, $user_id, 'Account Unlocked', 'Account unlocked due to lockout expiry for email: ' . $email);
                         }
                     }
                 }
@@ -265,20 +294,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                             $_SESSION['otp_user_id'] = $user['id'];
                             $_SESSION['otp_email'] = $user['email'];
 
+                            // Successful Login:
+                            // After successful login and setting $_SESSION['user_id']
+                            // Log this as a pre-OTP success (OTP sent)
+                            logUserActivity($conn, $user['id'], 'Login OTP Sent', 'User entered correct credentials; OTP sent to ' . $user['email'] . '.');
+
                             // Redirect to OTP verification page
                             header('Location: verify_otp.php');
                             exit();
                         } else {
                             $errors[] = "Authentication successful, but could not send OTP email. Please try again or contact support.";
                             $conn->prepare("DELETE FROM otp_codes WHERE user_id = :user_id AND otp_code = :otp_code")->execute(['user_id' => $user['id'], 'otp_code' => $otp_code]);
+                            logUserActivity($conn, $user['id'], 'OTP Send Failed', 'Authentication successful, but OTP email failed for user: ' . $user['email'] . '.');
                         }
                     } else {
                         $errors[] = "Failed to generate and store OTP. Please try again.";
+                        logUserActivity($conn, $user['id'], 'OTP Generation Failed', 'Failed to generate/store OTP for user: ' . $user['email'] . '.');
                     }
 
                 } else {
                     // Invalid credentials (email not found or password incorrect)
                     $errors[] = "Invalid email or password.";
+
+                    // Determine user ID for logging failed attempt:
+                    // If user exists, use their ID. If not, use 0 or null to indicate non-existent user.
+                    $attemptedUserId = $user['id'] ?? null;
+                    $attemptedUsername = $email; // Use the provided email as the attempted username
+
+                    // Failed Login Attempt:
+                    // If login credentials are incorrect
+                    // Assuming you have the attempted username, you might need to query the users table
+                    // to get a user_id for failed attempts if you want to track by user_id for non-existent users,
+                    // or just pass a dummy ID like 0 if you log non-user specific attempts.
+                    // For specific user attempts, fetch the user_id if the username exists, even if password fails.
+                    logUserActivity($conn, $attemptedUserId, 'Login Failed', 'Failed login attempt for username: ' . $attemptedUsername);
+
 
                     // Increment failed attempts in the database for the specific user
                     if ($user) {
@@ -289,6 +339,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         if ($new_attempts === MAX_ATTEMPTS_BEFORE_LOCKOUT_WARNING) {
                             $attempts_left_for_warning = MAX_LOGIN_ATTEMPTS_TOTAL - $new_attempts;
                             sendAlertEmail($user['email'], $attempts_left_for_warning);
+                            logUserActivity($conn, $user['id'], 'Login Warning Sent', 'Warning email sent to user ' . $user['email'] . ' due to multiple failed login attempts.');
                         }
 
                         // Lock the account if attempts exceed MAX_LOGIN_ATTEMPTS_TOTAL
@@ -308,16 +359,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                             // Send account locked email
                             sendAccountLockedEmail($user['email'], $lock_until_display_format);
+                            logUserActivity($conn, $user['id'], 'Account Locked', 'Account locked due to ' . $new_attempts . ' failed login attempts for user: ' . $user['email'] . '.');
                         }
+                    } else {
+                         // If user does not exist, still increment session-based counter for reCAPTCHA trigger
+                         $_SESSION['failed_login_attempts']++;
+                         // Logging for non-existent user is already handled by logUserActivity($conn, $attemptedUserId, ...) above
                     }
                     // Always increment session-based counter for reCAPTCHA trigger, even if user doesn't exist (to prevent enumeration)
-                    $_SESSION['failed_login_attempts']++;
+                    // This is already done for non-existent users in the 'else' block above for `if ($user)`.
+                    // For existing users where password failed, it's covered by the `if ($user)` block.
                 }
 
             } catch (PDOException $e) {
                 // Log the database error for administrator
                 error_log("Login database error: " . $e->getMessage());
                 $errors[] = "An unexpected error occurred. Please try again later.";
+                // Log the critical database error, possibly without a user_id if the error occurred before fetching it.
+                logUserActivity($conn, null, 'Critical Error', 'Database error during login process: ' . $e->getMessage());
             }
         }
     }
@@ -474,4 +533,4 @@ $csrf_token_value = getCsrfToken();
 </div>
 
 </body>
-</html> 
+</html>

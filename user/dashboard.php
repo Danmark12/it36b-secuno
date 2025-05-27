@@ -1,172 +1,201 @@
 <?php
-// dashboard.php
-// Include your database configuration if needed for fetching dashboard data
-// require '../db/config.php'; 
+// dashboard.php - User Dashboard
+require_once '../db/config.php'; // Includes database connection and session start
 
-// Placeholder data - in a real app, you'd fetch these from a database
-$totalReports = 150;
-$openReports = 45;
-$closedReports = 105;
-$announcement = "System maintenance scheduled for May 28th, 2025, 2:00 AM - 4:00 AM PST.";
+// Redirect if not logged in
+if (!isset($_SESSION['user_id'])) {
+    header('Location: ../login.php'); // Adjust path based on your login.php location relative to user/
+    exit();
+}
+
+$user_id = $_SESSION['user_id'];
+$user_name = $_SESSION['user_name'] ?? 'User'; // Assuming user_name is stored in session
+
+// --- Fetch Dashboard Data ---
+$total_incidents = 0; // Renamed for clarity
+$pending_incidents = 0; // Renamed for clarity
+$resolved_incidents = 0; // Renamed for clarity
+$announcements = [];
+$error_message = ''; // Initialize error message variable
+
+try {
+    // 1. Fetch Total Incidents (from the 'incidents' table)
+    $stmt_total = $conn->query("SELECT COUNT(*) AS total FROM incidents");
+    $total_incidents = $stmt_total->fetch(PDO::FETCH_ASSOC)['total'];
+
+    // 2. Fetch Pending Incidents (using the 'status' column)
+    $stmt_pending = $conn->query("SELECT COUNT(*) AS pending FROM incidents WHERE status = 'Pending'");
+    $pending_incidents = $stmt_pending->fetch(PDO::FETCH_ASSOC)['pending'];
+
+    // 3. Fetch Resolved Incidents (using the 'resolution_status' column)
+    $stmt_resolved = $conn->query("SELECT COUNT(*) AS resolved FROM incidents WHERE resolution_status = 'Resolved'");
+    $resolved_incidents = $stmt_resolved->fetch(PDO::FETCH_ASSOC)['resolved'];
+
+    // 4. Fetch Latest Announcements (from the 'announcements' table - this table definition was still needed)
+    $stmt_announcements = $conn->query("SELECT title, content, created_at FROM announcements ORDER BY created_at DESC LIMIT 5");
+    $announcements = $stmt_announcements->fetchAll(PDO::FETCH_ASSOC);
+
+} catch (PDOException $e) {
+    // Log the error for debugging, but show a generic message to the user
+    error_log("Dashboard data fetching error (User ID: " . $user_id . "): " . $e->getMessage());
+    $error_message = "Could not load dashboard data. Please try again later. (DB Error)";
+    // In a production environment, you might log user activity here as well:
+    // logUserActivity($conn, $user_id, 'Dashboard Load Failed', 'Database error: ' . $e->getMessage());
+}
+
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dashboard</title>
-    <style>
-        /* Inline CSS for Dashboard */
-        .dashboard-content {
-            padding: 20px;
-            background-color: #f9f9f9;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        }
-        .dashboard-content h2 {
-            color: #031b5c;
-            margin-bottom: 25px;
-            font-size: 28px;
-            border-bottom: 2px solid #eee;
-            padding-bottom: 10px;
-        }
-        .dashboard-cards {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .dashboard-card {
-            background-color: #fff;
-            padding: 25px;
-            border-radius: 10px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            text-align: center;
-            transition: transform 0.2s ease, box-shadow 0.2s ease;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-        }
-        .dashboard-card:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 6px 16px rgba(0,0,0,0.15);
-        }
-        .dashboard-card .icon {
-            font-size: 40px;
-            margin-bottom: 15px;
-            color: #00d1d1;
-        }
-        .dashboard-card h3 {
-            font-size: 18px;
-            color: #555;
-            margin-bottom: 10px;
-        }
-        .dashboard-card p {
-            font-size: 36px;
-            font-weight: bold;
-            color: #031b5c;
-        }
-        .announcements {
-            background-color: #e6f7ff; /* Light blue */
-            border-left: 5px solid #00d1d1;
-            padding: 20px;
-            border-radius: 8px;
-            margin-top: 30px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        .announcements h3 {
-            color: #031b5c;
-            margin-bottom: 15px;
-            font-size: 22px;
-        }
-        .announcements p {
-            font-size: 16px;
-            color: #333;
-            line-height: 1.6;
-        }
-        .latest-updates {
-            margin-top: 30px;
-        }
-        .latest-updates h3 {
-            color: #031b5c;
-            margin-bottom: 15px;
-            font-size: 22px;
-        }
-        .latest-updates ul {
-            list-style: none;
-            padding: 0;
-        }
-        .latest-updates li {
-            background-color: #fff;
-            border: 1px solid #eee;
-            padding: 15px;
-            margin-bottom: 10px;
-            border-radius: 8px;
-            display: flex;
-            align-items: flex-start;
-            gap: 15px;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        .latest-updates li .update-icon {
-            font-size: 24px;
-            color: #00d1d1;
-        }
-        .latest-updates li .update-text {
-            font-size: 16px;
-            color: #333;
-        }
-        .latest-updates li .update-text span {
-            font-weight: bold;
-            color: #031b5c;
-        }
-    </style>
-</head>
-<body>
-    <div class="dashboard-content">
-        <h2>Dashboard Overview</h2>
+<style>
+    /* Basic Dashboard Styles */
+    .dashboard-container {
+        padding: 25px;
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+    }
 
-        <div class="dashboard-cards">
-            <div class="dashboard-card">
-                <i class="fas fa-chart-bar icon"></i>
-                <h3>Total Reports</h3>
-                <p><?php echo $totalReports; ?></p>
+    .dashboard-container h1 {
+        color: #2c3e50;
+        margin-bottom: 25px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #eee;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+    }
+
+    .stat-card {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        text-align: center;
+        border-left: 5px solid; /* Dynamic border color */
+    }
+
+    /* Specific colors for report statuses */
+    .stat-card.total { border-left-color: #007bff; }   /* Blue for Total */
+    .stat-card.pending { border-left-color: #ffc107; } /* Yellow/Orange for Pending */
+    .stat-card.resolved { border-left-color: #28a745; } /* Green for Resolved */
+
+    .stat-card h3 {
+        color: #555;
+        font-size: 1.1em;
+        margin-bottom: 10px;
+    }
+
+    .stat-card .count {
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #333;
+    }
+
+    .announcements-section {
+        background-color: #ffffff;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        border-left: 5px solid #6c757d; /* Grey for Announcements */
+    }
+
+    .announcements-section h2 {
+        color: #2c3e50;
+        margin-top: 0;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid #eee;
+    }
+
+    .announcement-item {
+        margin-bottom: 15px;
+        padding-bottom: 15px;
+        border-bottom: 1px dashed #eee;
+    }
+    .announcement-item:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+
+    .announcement-item h3 {
+        font-size: 1.2em;
+        color: #007bff; /* Blue for announcement titles */
+        margin-top: 0;
+        margin-bottom: 5px;
+    }
+
+    .announcement-item p {
+        font-size: 0.95em;
+        color: #555;
+        line-height: 1.5;
+    }
+
+    .announcement-item .date {
+        font-size: 0.8em;
+        color: #888;
+        text-align: right;
+    }
+
+    /* Message styling for error display */
+    .message {
+        padding: 12px 20px;
+        border-radius: 5px;
+        margin-bottom: 20px;
+        font-weight: bold;
+        display: block; /* Always block for the dashboard error */
+    }
+
+    .message.error {
+        background-color: #f8d7da;
+        color: #721c24;
+        border: 1px solid #f5c6cb;
+    }
+</style>
+
+<div class="content-area">
+    <div class="dashboard-container">
+        <h1>Welcome, <?php echo htmlspecialchars($user_name); ?>!</h1>
+
+        <?php if (!empty($error_message)): ?>
+            <div class="message error">
+                <?php echo htmlspecialchars($error_message); ?>
             </div>
-            <div class="dashboard-card">
-                <i class="fas fa-folder-open icon"></i>
-                <h3>Open Reports</h3>
-                <p><?php echo $openReports; ?></p>
+        <?php endif; ?>
+
+        <h2>Your Incident Statistics</h2>
+        <div class="stats-grid">
+            <div class="stat-card total">
+                <h3>Total Incidents</h3>
+                <div class="count"><?php echo htmlspecialchars($total_incidents); ?></div>
             </div>
-            <div class="dashboard-card">
-                <i class="fas fa-check-circle icon"></i>
-                <h3>Closed Reports</h3>
-                <p><?php echo $closedReports; ?></p>
+            <div class="stat-card pending">
+                <h3>Pending Incidents</h3>
+                <div class="count"><?php echo htmlspecialchars($pending_incidents); ?></div>
+            </div>
+            <div class="stat-card resolved">
+                <h3>Resolved Incidents</h3>
+                <div class="count"><?php echo htmlspecialchars($resolved_incidents); ?></div>
             </div>
         </div>
 
-        <div class="announcements">
-            <h3><i class="fas fa-bullhorn"></i> Latest Announcements</h3>
-            <p><?php echo htmlspecialchars($announcement); ?></p>
+        <div class="announcements-section">
+            <h2>Latest Updates & Announcements</h2>
+            <?php if (!empty($announcements)): ?>
+                <?php foreach ($announcements as $announcement): ?>
+                    <div class="announcement-item">
+                        <h3><?php echo htmlspecialchars($announcement['title']); ?></h3>
+                        <p><?php echo nl2br(htmlspecialchars($announcement['content'])); ?></p>
+                        <div class="date">Published: <?php echo date('F j, Y', strtotime($announcement['created_at'])); ?></div>
+                    </div>
+                <?php endforeach; ?>
+            <?php else: ?>
+                <p>No new announcements at this time.</p>
+            <?php endif; ?>
         </div>
 
-        <div class="latest-updates">
-            <h3><i class="fas fa-sync-alt"></i> Recent Activity</h3>
-            <ul>
-                <li>
-                    <span class="update-icon"><i class="fas fa-file-alt"></i></span>
-                    <p class="update-text"><span>John Doe</span> submitted a new incident report (Type: Phishing) - 2 hours ago.</p>
-                </li>
-                <li>
-                    <span class="update-icon"><i class="fas fa-user-shield"></i></span>
-                    <p class="update-text"><span>Admin</span> reviewed Report #00123 - 5 hours ago.</p>
-                </li>
-                <li>
-                    <span class="update-icon"><i class="fas fa-check-double"></i></span>
-                    <p class="update-text">Report #00120 has been <span>resolved</span> - Yesterday.</p>
-                </li>
-            </ul>
-        </div>
     </div>
-</body>
-</html>
+</div>
